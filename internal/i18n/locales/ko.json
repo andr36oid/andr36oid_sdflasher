@@ -166,7 +166,7 @@
   "This card is slow. Android runs from the card, so apps may start slowly and games may stutter. For a smooth experience, use a card from a known brand marked A1 or A2.": "이 카드는 느려요. Android는 카드에서 실행되기 때문에 앱이 늦게 열리고 게임이 끊길 수 있어요. 원활하게 사용하려면 A1 또는 A2 표시가 있는 유명 브랜드 카드를 사용하세요.",
   "This card is too small. andr36oid needs a card of at least 16 GB; this one has %.1f GB.": "이 카드는 너무 작아요. andr36oid에는 16 GB 이상의 카드가 필요한데, 이 카드는 %.1f GB예요.",
   "This image is too old": "이 이미지는 너무 오래되었습니다",
-  "This image was built on %s. Builds from before September 2026 don't work with this flasher. Download a current release instead.": "이 이미지는 %s에 빌드됐어요. 2026년 9월 이전 빌드는 이 플래셔에서 사용할 수 없어요. 최신 릴리스를 다운로드하세요.",
+  "This image was built on %s. Builds from before 18 October 2026 don't work with this flasher. Download a current release instead.": "이 이미지는 %s에 빌드됐어요. 2026년 10월 18일 이전 빌드는 이 플래셔에서 사용할 수 없어요. 최신 릴리스를 다운로드하세요.",
   "This is the right disk. Write to it.": "선택한 디스크가 맞아요. 여기에 기록하세요.",
   "Treble installation": "Treble 설치",
   "Try again": "다시 시도",

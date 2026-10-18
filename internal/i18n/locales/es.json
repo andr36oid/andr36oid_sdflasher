@@ -166,7 +166,7 @@
   "This card is slow. Android runs from the card, so apps may start slowly and games may stutter. For a smooth experience, use a card from a known brand marked A1 or A2.": "Esta tarjeta es lenta. Android se ejecuta desde la tarjeta, así que las apps pueden tardar en abrirse y los juegos pueden ir a tirones. Para una experiencia fluida, usa una tarjeta de una marca conocida con la marca A1 o A2.",
   "This card is too small. andr36oid needs a card of at least 16 GB; this one has %.1f GB.": "Esta tarjeta es demasiado pequeña. andr36oid necesita una tarjeta de al menos 16 GB; esta tiene %.1f GB.",
   "This image is too old": "Esta imagen es demasiado antigua",
-  "This image was built on %s. Builds from before September 2026 don't work with this flasher. Download a current release instead.": "Esta imagen se compiló el %s. Las compilaciones anteriores a septiembre de 2026 no funcionan con este flasher. Descarga una versión actual.",
+  "This image was built on %s. Builds from before 18 October 2026 don't work with this flasher. Download a current release instead.": "Esta imagen se compiló el %s. Las compilaciones anteriores al 18 de octubre de 2026 no funcionan con este flasher. Descarga una versión actual.",
   "This is the right disk. Write to it.": "Este es el disco correcto. Escribir en él.",
   "Treble installation": "Instalación Treble",
   "Try again": "Reintentar",

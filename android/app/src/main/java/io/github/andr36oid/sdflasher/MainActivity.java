@@ -859,7 +859,7 @@ public final class MainActivity extends Activity {
           .setTitle(t("This image is too old"))
           .setMessage(
               t(
-                  "This image was built on %s. Builds from before September 2026 don't work"
+                  "This image was built on %s. Builds from before 18 October 2026 don't work"
                       + " with this flasher. Download a current release instead.",
                   oldBuild))
           .setPositiveButton(t("OK"), null)

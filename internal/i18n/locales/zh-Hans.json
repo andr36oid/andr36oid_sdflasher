@@ -166,7 +166,7 @@
   "This card is slow. Android runs from the card, so apps may start slowly and games may stutter. For a smooth experience, use a card from a known brand marked A1 or A2.": "这张存储卡速度较慢。Android 从存储卡运行，因此应用可能启动缓慢，游戏可能卡顿。为获得流畅体验，请使用知名品牌、标有 A1 或 A2 的存储卡。",
   "This card is too small. andr36oid needs a card of at least 16 GB; this one has %.1f GB.": "这张卡太小了。andr36oid 需要至少 16 GB 的卡，这张只有 %.1f GB。",
   "This image is too old": "此镜像过旧",
-  "This image was built on %s. Builds from before September 2026 don't work with this flasher. Download a current release instead.": "此镜像构建于 %s。2026 年 9 月之前的构建无法与此刷写工具配合使用。请改为下载最新版本。",
+  "This image was built on %s. Builds from before 18 October 2026 don't work with this flasher. Download a current release instead.": "此镜像构建于 %s。2026-10-18 之前的构建无法与此刷写工具配合使用。请改为下载最新版本。",
   "This is the right disk. Write to it.": "已确认所选磁盘无误，可以写入。",
   "Treble installation": "Treble 安装",
   "Try again": "重试",

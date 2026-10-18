@@ -166,7 +166,7 @@
   "This card is slow. Android runs from the card, so apps may start slowly and games may stutter. For a smooth experience, use a card from a known brand marked A1 or A2.": "This card is slow. Android runs from the card, so apps may start slowly and games may stutter. For a smooth experience, use a card from a known brand marked A1 or A2.",
   "This card is too small. andr36oid needs a card of at least 16 GB; this one has %.1f GB.": "This card is too small. andr36oid needs a card of at least 16 GB; this one has %.1f GB.",
   "This image is too old": "This image is too old",
-  "This image was built on %s. Builds from before September 2026 don't work with this flasher. Download a current release instead.": "This image was built on %s. Builds from before September 2026 don't work with this flasher. Download a current release instead.",
+  "This image was built on %s. Builds from before 18 October 2026 don't work with this flasher. Download a current release instead.": "This image was built on %s. Builds from before 18 October 2026 don't work with this flasher. Download a current release instead.",
   "This is the right disk. Write to it.": "This is the right disk. Write to it.",
   "Treble installation": "Treble installation",
   "Try again": "Try again",
