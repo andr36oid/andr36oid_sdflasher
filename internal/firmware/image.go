@@ -187,29 +187,9 @@ func inspect(ctx context.Context, p string, progress func(int64, int64), digest 
 	if b, e := ReadFile(boot, "/Image-resizing", 128<<20); e == nil && len(b) < 4096 {
 		return nil, errors.New("truncated Image-resizing")
 	}
-	vendor, _ := t.Find("vendor")
-	vfs, e := extfs.Open(f, vendor.Offset(), vendor.Size())
+	props, e := releaseFacts(f, t, boot)
 	if e != nil {
-		return nil, fmt.Errorf("vendor filesystem: %w", e)
-	}
-	fstab, e := vfs.ReadFile("/etc/fstab.rk30board", 128<<10)
-	if e != nil || !bytes.Contains(fstab, []byte("by-name/vendor")) || !bytes.Contains(fstab, []byte("first_stage_mount")) {
-		return nil, errors.New("vendor does not contain the Treble mount configuration")
-	}
-	vintf, e := vfs.ReadFile("/etc/vintf/manifest.xml", 4<<20)
-	if e != nil || !bytes.Contains(vintf, []byte("manifest")) {
-		return nil, errors.New("Treble vendor manifest missing")
-	}
-	sys, _ := t.Find("system")
-	sfs, e := extfs.Open(f, sys.Offset(), sys.Size())
-	if e != nil {
-		return nil, fmt.Errorf("system filesystem: %w", e)
-	}
-	var props []byte
-	for _, name := range []string{"/system/build.prop", "/build.prop", "/system/etc/prop.default", "/system/product/build.prop", "/product/build.prop"} {
-		b, _ := sfs.ReadFile(name, 1<<20)
-		props = append(props, b...)
-		props = append(props, '\n')
+		return nil, e
 	}
 	if !bytes.Contains(props, []byte("ro.treble.enabled=true")) {
 		return nil, errors.New("system does not declare Treble support")

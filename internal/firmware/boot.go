@@ -195,6 +195,14 @@ func PrepareBoot(im *Image, profile string, noROMs, updating bool, custom, dir s
 	if e = write("andr36oid-profile.txt", []byte(profile+"\n")); e != nil {
 		return "", e
 	}
+	// The image's build info is only for the flasher, the card doesn't need it
+	for _, name := range BuildOnlyFiles {
+		if _, e = ReadFile(fs, "/"+name, 64<<10); e == nil {
+			if e = fs.Remove(name); e != nil {
+				return "", e
+			}
+		}
+	}
 	if e = out.Sync(); e != nil {
 		return "", e
 	}
