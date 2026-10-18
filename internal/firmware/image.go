@@ -17,7 +17,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/andr36oid/andr36oid-sdflasher/internal/extfs"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/layout"
 	"github.com/diskfs/go-diskfs/backend"
 	"github.com/diskfs/go-diskfs/backend/file"
@@ -187,32 +186,12 @@ func inspect(ctx context.Context, p string, progress func(int64, int64), digest 
 	if b, e := ReadFile(boot, "/Image-resizing", 128<<20); e == nil && len(b) < 4096 {
 		return nil, errors.New("truncated Image-resizing")
 	}
-	props, e := releaseFacts(f, t, boot)
+	props, e := releaseFacts(boot)
 	if e != nil {
 		return nil, e
 	}
 	if !bytes.Contains(props, []byte("ro.treble.enabled=true")) {
 		return nil, errors.New("system does not declare Treble support")
-	}
-	for _, name := range []string{"metadata", "cache"} {
-		p, _ := t.Find(name)
-
-		fs, e := extfs.Open(f, p.Offset(), p.Size())
-		if e != nil {
-			return nil, fmt.Errorf("invalid %s filesystem: %w", name, e)
-		}
-		if name == "cache" {
-			names, e := fs.RootNames()
-			if e != nil {
-				return nil, e
-			}
-			for _, n := range names {
-				if n != "." && n != ".." && n != "lost+found" {
-					return nil, errors.New("release cache partition is not empty")
-				}
-			}
-		}
-
 	}
 	profiles, e := Profiles(boot)
 	if e != nil {

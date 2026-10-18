@@ -1,6 +1,7 @@
 package firmware
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,7 +72,7 @@ func TestReleaseFactsFromBootInfo(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	props, e := releaseFacts(f, tab, boot)
+	props, e := releaseFacts(boot)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -87,21 +88,21 @@ func TestReleaseFactsBootInfoChecksVendor(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e := releaseFacts(f, tab, boot); e == nil || !strings.Contains(e.Error(), "manifest") {
+	if _, e := releaseFacts(boot); e == nil || !strings.Contains(e.Error(), "manifest") {
 		t.Errorf("error %v", e)
 	}
 }
 
-// Without the file, or with a format this flasher doesn't know, the partitions are read
-// as before (here: zeros, so it fails on vendor).
-func TestReleaseFactsFallsBackToPartitions(t *testing.T) {
+// Without the file, or with a format this flasher doesn't know, the image is not
+// compatible: older releases are refused instead of read as ext4.
+func TestReleaseFactsWithoutBootInfoIncompatible(t *testing.T) {
 	for _, files := range []map[string]string{{}, {BuildInfoFile: strings.Replace(testBuildInfo, "format=1", "format=2", 1)}} {
 		f, tab := bootOnlyImage(t, files)
 		boot, e := OpenBoot(f, tab, true)
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, e := releaseFacts(f, tab, boot); e == nil || !strings.Contains(e.Error(), "vendor filesystem") {
+		if _, e := releaseFacts(boot); !errors.Is(e, ErrNoBuildInfo) {
 			t.Errorf("%v: error %v", files, e)
 		}
 	}
