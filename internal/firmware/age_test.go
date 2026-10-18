@@ -10,11 +10,12 @@ func TestTooOld(t *testing.T) {
 		"lineage-18.1-20250712-r36s-android.zip":              "2025-07-12",
 		`C:\Users\x\Downloads\lineage-18.1-20260831-1200.img`: "2026-08-31",
 		"/home/x/lineage-18.1-20251109-0900-r46h-android.img": "2025-11-09",
-		"lineage-18.1-20260901-0001-r36s-android.img.zip":     "",
-		"lineage-18.1-20261011-1531-r36s-android.img.zip":     "",
-		"my-card.img":                    "",
-		"lineage-18.1-20250231-r36s.img": "",
-		"backup-120250902.img":           "",
+		"lineage-18.1-20260901-0001-r36s-android.img.zip":     "2026-09-01",
+		"andr36oid-20261017-2234-rk3326.img.xz":               "2026-10-17",
+		"andr36oid-20261018-0038-rk3326.img.xz":               "",
+		"my-card.img":                                         "",
+		"lineage-18.1-20250231-r36s.img":                      "",
+		"backup-120250902.img":                                "",
 	} {
 		got, old := TooOld(name)
 		if got != want || old != (want != "") {

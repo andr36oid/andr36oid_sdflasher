@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// OldestBuild: builds from before this date don't work with this flasher. Release
-// lists leave them out, and a chosen file whose name carries an older date is
-// refused before it is opened.
-var OldestBuild = time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
+// OldestBuild: builds from before this date don't work with this flasher: they have no
+// andr36oid-build.txt on BOOT. Release lists leave them out, and a chosen file whose name
+// carries an older date is refused before it is opened.
+var OldestBuild = time.Date(2026, time.October, 18, 0, 0, 0, 0, time.UTC)
 
 // the build date in a file name: 20261016 in andr36oid-20261016-2212-rk3326.img.xz (and in
 // the older lineage-18.1-20261011-1531-r36s-android.img.zip), also with the time run on
