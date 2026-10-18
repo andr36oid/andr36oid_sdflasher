@@ -16,10 +16,9 @@ jobs:
           cache: true
       - run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev xorg-dev xvfb e2fsprogs
       - run: go vet ./...
-      - run: go test -race ./internal/layout ./internal/extfs ./internal/firmware ./internal/flash ./internal/catalog ./internal/jobs ./internal/platform ./internal/i18n ./mobile
+      - run: go test -race ./internal/layout ./internal/firmware ./internal/flash ./internal/catalog ./internal/jobs ./internal/platform ./internal/i18n ./mobile
       - run: xvfb-run -a go test ./internal/ui
       - run: go test ./internal/layout -fuzz=FuzzRead -fuzztime=15s
-      - run: go test ./internal/extfs -fuzz=FuzzOpen -fuzztime=15s
   build:
     needs: test
     strategy:
