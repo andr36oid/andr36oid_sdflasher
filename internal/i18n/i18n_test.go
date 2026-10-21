@@ -8,7 +8,7 @@ import (
 )
 
 func TestLocaleSelection(t *testing.T) {
-	cases := map[string]string{"": "en", "C": "en", "fr_FR": "en", "en_US.UTF-8": "en", "de_DE": "de", "ru-RU": "ru", "uk_UA": "uk", "es-MX": "es", "pt_PT": "pt", "pt-BR": "pt-BR", "pt_BR.UTF-8": "pt-BR", "pt-Latn-BR": "pt-BR", "pt-AO": "pt", "hi-IN": "hi", "ko_KR": "ko", "zh-CN": "zh-Hans", "zh-Hans-SG": "zh-Hans", "zh-TW": "en", "zh_TW.UTF-8": "en", "zh-Hant-TW": "en", "zh-Hant": "en"}
+	cases := map[string]string{"": "en", "C": "en", "fr_FR": "en", "en_US.UTF-8": "en", "de_DE": "de", "ru-RU": "ru", "uk_UA": "uk", "es-MX": "es", "pt_PT": "pt", "pt-BR": "pt-BR", "pt_BR.UTF-8": "pt-BR", "pt-Latn-BR": "pt-BR", "pt-AO": "pt", "hi-IN": "hi", "ja_JP.UTF-8": "ja", "ja": "ja", "ko_KR": "ko", "zh-CN": "zh-Hans", "zh-Hans-SG": "zh-Hans", "zh-TW": "en", "zh_TW.UTF-8": "en", "zh-Hant-TW": "en", "zh-Hant": "en"}
 	for input, want := range cases {
 		if got := Resolve(input); got != want {
 			t.Errorf("%q: got %s, want %s", input, got, want)

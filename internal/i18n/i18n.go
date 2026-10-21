@@ -17,7 +17,7 @@ var Languages = []Language{
 	{"en", "English", "🇬🇧"}, {"de", "Deutsch", "🇩🇪"}, {"ru", "Русский", "🇷🇺"},
 	{"uk", "Українська", "🇺🇦"}, {"es", "Español", "🇪🇸"}, {"pt", "Português", "🇵🇹"},
 	{"pt-BR", "Português brasileiro", "🇧🇷"}, {"hi", "हिन्दी", "🇮🇳"},
-	{"ko", "한국어", "🇰🇷"}, {"zh-Hans", "简体中文", "🇨🇳"},
+	{"ja", "日本語", "🇯🇵"}, {"ko", "한국어", "🇰🇷"}, {"zh-Hans", "简体中文", "🇨🇳"},
 }
 var catalogs = map[string]map[string]string{}
 

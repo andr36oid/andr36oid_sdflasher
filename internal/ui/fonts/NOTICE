@@ -1,4 +1,4 @@
-SD Flasher UI is a subset and merge of Noto Sans, Noto Sans Devanagari, Noto Sans KR and Noto Sans SC, distributed under the SIL Open Font License 1.1. Original source: https://github.com/google/fonts (ofl/notosans, ofl/notosansdevanagari, ofl/notosanskr, ofl/notosanssc). The modified font family has been renamed.
+SD Flasher UI is a subset and merge of Noto Sans, Noto Sans Devanagari, Noto Sans KR and Noto Sans SC (which also draws the Japanese kana), distributed under the SIL Open Font License 1.1. Original source: https://github.com/google/fonts (ofl/notosans, ofl/notosansdevanagari, ofl/notosanskr, ofl/notosanssc). The modified font family has been renamed.
 
 Source SHA256:
 bfb7bb691513f12e734dc346c03a03f784912432d7e3fa8e56efcf906fe86b3d  Latin.ttf

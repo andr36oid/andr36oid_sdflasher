@@ -122,7 +122,7 @@ public class ReleaseTest {
                 .setClassName(
                     context.getPackageName(), "io.github.andr36oid.sdflasher.MainActivity"))) {
       for (String code :
-          new String[] {"en", "de", "ru", "uk", "es", "pt", "pt-BR", "hi", "ko", "zh-Hans"}) {
+          new String[] {"en", "de", "ru", "uk", "es", "pt", "pt-BR", "hi", "ja", "ko", "zh-Hans"}) {
         context.getSharedPreferences("settings", 0).edit().putString("language", code).commit();
         scenario.recreate();
         scenario.onActivity(

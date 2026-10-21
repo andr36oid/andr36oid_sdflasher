@@ -7,7 +7,7 @@ import java.util.Locale;
 
 final class I18n {
   static final String[] CODES = {
-    "en", "de", "ru", "uk", "es", "pt", "pt-BR", "hi", "ko", "zh-Hans"
+    "en", "de", "ru", "uk", "es", "pt", "pt-BR", "hi", "ja", "ko", "zh-Hans"
   };
   static final String[] NAMES = {
     "🇬🇧 English",
@@ -18,6 +18,7 @@ final class I18n {
     "🇵🇹 Português",
     "🇧🇷 Português brasileiro",
     "🇮🇳 हिन्दी",
+    "🇯🇵 日本語",
     "🇰🇷 한국어",
     "🇨🇳 简体中文"
   };

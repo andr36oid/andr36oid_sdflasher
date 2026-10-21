@@ -8,7 +8,7 @@ from fontTools.merge import Merger
 from pathlib import Path
 import json,shutil,hashlib,sys
 root=Path(sys.argv[1])
-alltext=''.join(Path('internal/i18n/locales/'+code+'.json').read_text() for code in ['en','de','ru','uk','es','pt','pt-BR','hi','ko','zh-Hans'])+'EnglishDeutschРусскийУкраїнськаEspañolPortuguêsPortuguês brasileiroहिन्दी한국어简体中文'
+alltext=''.join(Path('internal/i18n/locales/'+code+'.json').read_text() for code in ['en','de','ru','uk','es','pt','pt-BR','hi','ja','ko','zh-Hans'])+'EnglishDeutschРусскийУкраїнськаEspañolPortuguêsPortuguês brasileiroहिन्दी日本語한국어简体中文'
 remaining=set(map(ord,alltext))|set(range(32,256))
 # General Punctuation (’ … — and so on) comes from Noto Sans too; the CJK font draws it full width.
 source={'Latin':{c for c in remaining if c<0x900 or 0x2000<=c<0x2070},'Devanagari':{c for c in remaining if 0x900<=c<0xa00},'Korean':{c for c in remaining if 0xac00<=c<=0xd7af}}
@@ -32,5 +32,5 @@ for weight,label in [(400,'Regular'),(700,'Bold')]:
         if value:record.string=value.encode(record.getEncoding())
     merged.save('internal/ui/fonts/SDFlasherUI-'+label+'.ttf')
 for name in source:shutil.copyfile(root/(name+'-OFL.txt'),'internal/ui/fonts/'+name+'-OFL.txt')
-Path('internal/ui/fonts/NOTICE').write_text('SD Flasher UI is a subset and merge of Noto Sans, Noto Sans Devanagari, Noto Sans KR and Noto Sans SC, distributed under the SIL Open Font License 1.1. Original source: https://github.com/google/fonts (ofl/notosans, ofl/notosansdevanagari, ofl/notosanskr, ofl/notosanssc). The modified font family has been renamed.\n\nSource SHA256:\n'+''.join(hashlib.sha256((root/(n+'.ttf')).read_bytes()).hexdigest()+'  '+n+'.ttf\n' for n in source))
+Path('internal/ui/fonts/NOTICE').write_text('SD Flasher UI is a subset and merge of Noto Sans, Noto Sans Devanagari, Noto Sans KR and Noto Sans SC (which also draws the Japanese kana), distributed under the SIL Open Font License 1.1. Original source: https://github.com/google/fonts (ofl/notosans, ofl/notosansdevanagari, ofl/notosanskr, ofl/notosanssc). The modified font family has been renamed.\n\nSource SHA256:\n'+''.join(hashlib.sha256((root/(n+'.ttf')).read_bytes()).hexdigest()+'  '+n+'.ttf\n' for n in source))
 print('Created bundled UI fonts')
