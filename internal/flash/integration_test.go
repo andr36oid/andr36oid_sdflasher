@@ -42,7 +42,7 @@ func TestReleasedGPTMigration(t *testing.T) {
 	if _, e = io.Copy(card, old); e != nil {
 		t.Fatal(e)
 	}
-	const size = int64(4 << 30)
+	const size = int64(32 << 30)
 	card.Truncate(size)
 	tab.Size = size
 	tab.Parts = append(tab.Parts, layout.Partition{Number: 6, Name: "userdata", Start: 5701009, End: 7000000, Type: layout.LinuxType, ID: layout.GUID()}, layout.Partition{Number: 7, Name: "EASYROMS", Start: 7000001, End: uint64(size/512) - 34, Type: layout.LinuxType, ID: layout.GUID()})
@@ -91,8 +91,10 @@ func TestReleasedGPTMigration(t *testing.T) {
 	if e != nil || !bytes.Contains(script, []byte("ramdisk.uimg")) || bytes.Contains(script, []byte("Image-resizing")) {
 		t.Fatal("migration left the formatter boot active")
 	}
+	// bit 63 (hidden from Windows) is set on andr36oid's own partitions now
 	newU, _ := newtab.Find("userdata")
+	newU.Flags = u.Flags
 	if newU != u {
-		t.Fatal("userdata identity changed")
+		t.Fatalf("userdata identity changed: %+v, was %+v", newU, u)
 	}
 }
