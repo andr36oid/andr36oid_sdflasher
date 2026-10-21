@@ -51,7 +51,10 @@ type Card struct {
 	Profile     string       `json:"profile"`
 	NoROMs      bool         `json:"no_roms"`
 	Fingerprint string       `json:"fingerprint"`
-	Reason      string       `json:"reason,omitempty"`
+	// DataCard: the data card of an eMMC install (andr36oid-datacard.txt on BOOT). It
+	// can't start; an update makes it bootable again.
+	DataCard bool   `json:"data_card,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 	// Kept are the firmware.KeptFiles found on its BOOT.
 	Kept map[string][]byte `json:"kept,omitempty"`
 }
@@ -67,6 +70,11 @@ func Snapshot(r io.ReaderAt, size int64) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
+
+// DataCardFile on BOOT marks the data card of an eMMC install (the eMMC installer writes
+// it). Such a card may lack its boot.ini; an update writes a fresh one.
+const DataCardFile = "andr36oid-datacard.txt"
+
 func InspectCard(f io.ReaderAt, size int64) (Card, error) {
 	c := Card{}
 	var e error
@@ -85,8 +93,11 @@ func InspectCard(f io.ReaderAt, size int64) (Card, error) {
 		c.Reason = "BOOT filesystem was not recognized"
 		return c, nil
 	}
+	if _, e := firmware.ReadFile(boot, "/"+DataCardFile, 4096); e == nil {
+		c.DataCard = true
+	}
 	script, e := firmware.ReadFile(boot, "/boot.ini", 128<<10)
-	if e != nil || !bytes.Contains(script, []byte("odroidgoa-uboot-config")) {
+	if !c.DataCard && (e != nil || !bytes.Contains(script, []byte("odroidgoa-uboot-config"))) {
 		c.Reason = "This is not a recognized andr36oid installation"
 		return c, nil
 	}

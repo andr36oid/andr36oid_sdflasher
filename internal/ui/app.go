@@ -666,6 +666,9 @@ func (s *screen) confirm() {
 	if mode == "update" {
 		title = s.t("Update this card?")
 		msg = s.drive.Label() + "\n\n" + s.t("BOOT, system, and vendor will be updated together. The dedicated cache will be cleared. Userdata and games stay in place. A recovery backup will be saved before writing.")
+		if s.card.DataCard {
+			msg = s.t("This is the data card of an eMMC install. Updating it makes it bootable again, and the console will start from it instead of the eMMC.") + "\n\n" + msg
+		}
 	}
 	if s.convert {
 		msg += "\n\n" + s.t(ownDTBWarning)

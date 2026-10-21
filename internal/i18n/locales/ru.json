@@ -167,6 +167,7 @@
   "This card is too small. andr36oid needs a card of at least 16 GB; this one has %.1f GB.": "Эта карта слишком маленькая. andr36oid нужна карта хотя бы на 16 ГБ, а на этой %.1f ГБ.",
   "This image is too old": "Этот образ слишком старый",
   "This image was built on %s. Builds from before 18 October 2026 don't work with this flasher. Download a current release instead.": "Этот образ собран %s. Сборки старше 18 октября 2026 года с этой программой не работают. Скачайте актуальный выпуск.",
+  "This is the data card of an eMMC install. Updating it makes it bootable again, and the console will start from it instead of the eMMC.": "Это карта данных установки на eMMC. После обновления она снова станет загрузочной, и консоль будет запускаться с неё, а не с eMMC.",
   "This is the right disk. Write to it.": "Это нужный диск. Записать на него.",
   "Treble installation": "Установка Treble",
   "Try again": "Повторить",

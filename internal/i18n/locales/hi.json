@@ -167,6 +167,7 @@
   "This card is too small. andr36oid needs a card of at least 16 GB; this one has %.1f GB.": "यह कार्ड बहुत छोटा है। andr36oid को कम से कम 16 GB का कार्ड चाहिए; इसमें %.1f GB है।",
   "This image is too old": "यह इमेज बहुत पुरानी है",
   "This image was built on %s. Builds from before 18 October 2026 don't work with this flasher. Download a current release instead.": "यह इमेज %s को बनी थी। 18 अक्टूबर 2026 से पहले के बिल्ड इस फ़्लैशर के साथ काम नहीं करते। इसके बजाय मौजूदा रिलीज़ डाउनलोड करें।",
+  "This is the data card of an eMMC install. Updating it makes it bootable again, and the console will start from it instead of the eMMC.": "यह eMMC इंस्टॉलेशन का डेटा कार्ड है। इसे अपडेट करने पर यह फिर से बूट करने योग्य हो जाएगा, और कंसोल eMMC के बजाय इसी से शुरू होगा।",
   "This is the right disk. Write to it.": "यह सही डिस्क है। इसमें लिखें।",
   "Treble installation": "Treble इंस्टॉलेशन",
   "Try again": "दोबारा कोशिश करें",

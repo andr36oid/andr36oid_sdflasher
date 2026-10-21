@@ -167,6 +167,7 @@
   "This card is too small. andr36oid needs a card of at least 16 GB; this one has %.1f GB.": "这张卡太小了。andr36oid 需要至少 16 GB 的卡，这张只有 %.1f GB。",
   "This image is too old": "此镜像过旧",
   "This image was built on %s. Builds from before 18 October 2026 don't work with this flasher. Download a current release instead.": "此镜像构建于 %s。2026-10-18 之前的构建无法与此刷写工具配合使用。请改为下载最新版本。",
+  "This is the data card of an eMMC install. Updating it makes it bootable again, and the console will start from it instead of the eMMC.": "这是 eMMC 安装的数据卡。更新后它将重新变为可启动，主机将从这张卡启动，而不是从 eMMC 启动。",
   "This is the right disk. Write to it.": "已确认所选磁盘无误，可以写入。",
   "Treble installation": "Treble 安装",
   "Try again": "重试",
