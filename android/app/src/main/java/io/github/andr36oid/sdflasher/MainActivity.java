@@ -540,7 +540,9 @@ public final class MainActivity extends Activity {
     boolean busy = WorkState.busy;
     if (WorkState.error.isEmpty()) lastError = "";
     if (WorkState.result.isEmpty()) lastResult = "";
-    for (View view : controls) view.setEnabled(!busy);
+    // "Update" gets its own state below: switching it on here and off there on every
+    // refresh replayed the radio buttons' animation, as if they kept being tapped
+    for (View view : controls) if (view != update) view.setEnabled(!busy);
     imageLabel.setText(
         WorkState.image == null
             ? t("Choose a release to see its supported consoles and panels.")
@@ -565,9 +567,18 @@ public final class MainActivity extends Activity {
                             ? "Treble installation"
                             : "Legacy andr36oid — will migrate to Treble")
                     : t("New installation required"));
+    boolean modeChanged =
+        install.isChecked() == WorkState.update
+            || update.isChecked() != WorkState.update
+            || update.isEnabled() != (!busy && installed);
     install.setChecked(!WorkState.update);
     update.setChecked(WorkState.update);
     update.setEnabled(!busy && installed);
+    // changes made here (not by a tap) show at once, without the tap animation
+    if (modeChanged) {
+      install.jumpDrawablesToCurrentState();
+      update.jumpDrawablesToCurrentState();
+    }
     noROMs.setChecked(WorkState.noROMs);
     noROMs.setEnabled(!busy && !WorkState.update);
     renderStorage(busy);
@@ -823,10 +834,17 @@ public final class MainActivity extends Activity {
             .setType("*/*")
             .addCategory(Intent.CATEGORY_OPENABLE);
     if (code == 1) {
-      // release images come packed: only .img.xz and .img.zip are listed
+      // release images come packed (.img.xz, .img.zip); an unpacked .img has no type of
+      // its own and is listed as plain binary data
       intent.putExtra(
           Intent.EXTRA_MIME_TYPES,
-          new String[] {"application/x-xz", "application/zip", "application/x-zip-compressed"});
+          new String[] {
+            "application/x-xz",
+            "application/zip",
+            "application/x-zip-compressed",
+            "application/octet-stream",
+            "application/x-raw-disk-image"
+          });
     }
     startActivityForResult(intent, code);
   }
