@@ -340,7 +340,7 @@ func (s *screen) loadImage(p string) {
 	// a build too old for this flasher: refused by its name, before it is unpacked
 	if date, old := firmware.TooOld(p); old {
 		s.releaseLabel.SetText(s.t("Image rejected. Choose an andr36oid Treble release."))
-		s.info(s.t("This image is too old"), s.t("This image was built on %s. Builds from before 18 October 2026 don't work with this flasher. Download a current release instead.", date), s.win)
+		s.info(s.t("This image is too old"), s.t("This image was built on %s. Builds from before 22 October 2026 don't work with this flasher. Download a current release instead.", date), s.win)
 		return
 	}
 	s.setBusy(true)

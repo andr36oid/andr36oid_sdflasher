@@ -135,20 +135,16 @@ func TestProfileListFromImage(t *testing.T) {
 		"Experimental/EE-G80-Panel8|G80|G80C — Panel 8|experimental,also=R36S V12 clone\n" +
 		"Experimental/EE-V12-Var1-Panel8|R36S V12 clone|R36S V12 clone — Variant 1, Panel 8|\n" +
 		"broken line\n"))
-	g80info := profileInfoFor(list, "Experimental/EE-G80-Panel8")
+	g80info := list["Experimental/EE-G80-Panel8"]
 	g80 := Profile{ID: "Experimental/EE-G80-Panel8", Console: g80info.Console, AlsoFor: g80info.AlsoFor}
 	if !g80info.Experimental || !g80.For("G80") || !g80.For("R36S V12 clone") || g80.For("K36 / HG36") {
 		t.Fatalf("EE-G80-Panel8 read as %+v", g80info)
 	}
-	if v12 := profileInfoFor(list, "Experimental/EE-V12-Var1-Panel8"); v12.Experimental || v12.Name != "R36S V12 clone — Variant 1, Panel 8" {
+	if v12 := list["Experimental/EE-V12-Var1-Panel8"]; v12.Experimental || v12.Name != "R36S V12 clone — Variant 1, Panel 8" {
 		t.Fatalf("V12 variant 1 read as %+v", v12)
 	}
-	// an image from before the list: the folder's name, experimental by folder
-	if old := profileInfoFor(nil, "Experimental/EE-K36-Panel1"); old.Name != "EE K36 Panel1" || !old.Experimental {
-		t.Fatalf("old image profile read as %+v", old)
-	}
-	if old := profileInfoFor(nil, "Devices/D-28S"); old.Name != "D 28S" || old.Experimental {
-		t.Fatalf("old image device read as %+v", old)
+	if len(list) != 2 {
+		t.Fatalf("read %d profiles, want 2", len(list))
 	}
 }
 

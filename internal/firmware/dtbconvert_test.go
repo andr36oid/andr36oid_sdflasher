@@ -2,6 +2,7 @@ package firmware
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +65,8 @@ func fakeImage(t *testing.T, dir string) *Image {
 		"Panels/Panel4/rg351mp-kernel.dtb":                   b.UBoot,
 		"Experimental/EE-G80-Panel8/rk3326-r36s-android.dtb": b.EE,
 		"Experimental/EE-G80-Panel8/rg351mp-kernel.dtb":      b.UBoot,
+		ProfileList: []byte("Panels/Panel4|R36S|R36S — Panel 4|\n" +
+			"Experimental/EE-G80-Panel8|G80|G80C / G80CA / G80D — Panel 8|experimental\n"),
 	}
 	for _, d := range []string{"Panels", "Panels/Panel4", "Experimental", "Experimental/EE-G80-Panel8"} {
 		if e := fs.Mkdir(d); e != nil {
@@ -153,5 +156,27 @@ func TestPrepareBootRefusesUnknownDTB(t *testing.T) {
 	_, e := PrepareBoot(im, "Panels/Panel4", false, false, custom, dir, BootOptions{ConvertDTB: true})
 	if e == nil || !dtbconv.IsRefusal(e) {
 		t.Fatalf("want a refusal, got %v", e)
+	}
+}
+
+// An image from before andr36oid-profiles.txt is refused, not listed by folder names.
+func TestProfilesNeedTheImagesList(t *testing.T) {
+	dir := t.TempDir()
+	im := fakeImage(t, dir)
+	f, e := os.OpenFile(im.Path, os.O_RDWR, 0)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer f.Close()
+	p, _ := im.Table.Find("BOOT")
+	fs, e := fat32.Read(file.New(f, false), p.Size(), p.Offset(), 512)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = fs.Remove("/" + ProfileList); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = Profiles(fs); !errors.Is(e, ErrNoProfileList) {
+		t.Fatalf("Profiles without the list: %v", e)
 	}
 }

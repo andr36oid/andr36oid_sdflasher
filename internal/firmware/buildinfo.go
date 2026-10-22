@@ -36,7 +36,7 @@ func ParseBuildInfo(b []byte) (map[string]string, bool) {
 // 2026-10-18, or not an andr36oid release at all. This flasher doesn't read the system and
 // vendor partitions, so it can't check or install such an image.
 var ErrNoBuildInfo = errors.New("this image is not compatible with this flasher: its BOOT partition has no " +
-	BuildInfoFile + ". Choose an andr36oid release from 2026-10-18 or later")
+	BuildInfoFile + ". Choose an andr36oid release from 2026-10-22 or later")
 
 // releaseFacts checks the Treble mount setup and returns the build properties the
 // flasher uses, all from andr36oid-build.txt on BOOT.

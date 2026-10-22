@@ -167,7 +167,7 @@
   "This card is slow. Android runs from the card, so apps may start slowly and games may stutter. For a smooth experience, use a card from a known brand marked A1 or A2.": "このカードは遅いです。Android はカード上で動作するため、アプリの起動が遅くなったり、ゲームがカクついたりすることがあります。快適に使うには、A1 または A2 と表示された、信頼できるブランドのカードを使ってください。",
   "This card is too small. andr36oid needs a card of at least 16 GB; this one has %.1f GB.": "このカードは小さすぎます。andr36oid には 16 GB 以上のカードが必要です。このカードは %.1f GB です。",
   "This image is too old": "このイメージは古すぎます",
-  "This image was built on %s. Builds from before 18 October 2026 don't work with this flasher. Download a current release instead.": "このイメージは %s にビルドされました。2026 年 10 月 18 日より前のビルドは、このフラッシャーでは動作しません。代わりに最新のリリースをダウンロードしてください。",
+  "This image was built on %s. Builds from before 22 October 2026 don't work with this flasher. Download a current release instead.": "このイメージは %s にビルドされました。2026 年 10 月 22 日より前のビルドは、このフラッシャーでは動作しません。代わりに最新のリリースをダウンロードしてください。",
   "This is the data card of an eMMC install. Updating it makes it bootable again, and the console will start from it instead of the eMMC.": "これは eMMC インストールのデータカードです。更新すると再び起動できるようになり、本体は eMMC ではなくこのカードから起動します。",
   "This is the right disk. Write to it.": "これが正しいディスクです。ここに書き込みます。",
   "Treble installation": "Treble のインストール",

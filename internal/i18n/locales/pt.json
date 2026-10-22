@@ -167,7 +167,7 @@
   "This card is slow. Android runs from the card, so apps may start slowly and games may stutter. For a smooth experience, use a card from a known brand marked A1 or A2.": "Este cartão é lento. O Android corre a partir do cartão, por isso as apps podem demorar a abrir e os jogos podem engasgar. Para uma experiência fluida, use um cartão de uma marca conhecida com a marcação A1 ou A2.",
   "This card is too small. andr36oid needs a card of at least 16 GB; this one has %.1f GB.": "Este cartão é demasiado pequeno. O andr36oid precisa de um cartão com pelo menos 16 GB; este tem %.1f GB.",
   "This image is too old": "Esta imagem é demasiado antiga",
-  "This image was built on %s. Builds from before 18 October 2026 don't work with this flasher. Download a current release instead.": "Esta imagem foi criada em %s. As versões anteriores a 18 de outubro de 2026 não funcionam com este flasher. Transfira uma versão atual.",
+  "This image was built on %s. Builds from before 22 October 2026 don't work with this flasher. Download a current release instead.": "Esta imagem foi criada em %s. As versões anteriores a 22 de outubro de 2026 não funcionam com este flasher. Transfira uma versão atual.",
   "This is the data card of an eMMC install. Updating it makes it bootable again, and the console will start from it instead of the eMMC.": "Este é o cartão de dados de uma instalação no eMMC. Ao atualizá-lo, volta a ser de arranque, e a consola passa a arrancar a partir dele em vez do eMMC.",
   "This is the right disk. Write to it.": "Este é o disco certo. Gravar nele.",
   "Treble installation": "Instalação Treble",

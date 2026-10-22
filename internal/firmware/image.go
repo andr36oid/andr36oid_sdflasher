@@ -259,10 +259,11 @@ func validDTB(b []byte) bool {
 
 func Profiles(fs filesystem.FileSystem) ([]Profile, error) {
 	var result []Profile
-	var known map[string]profileInfo
-	if b, e := ReadFile(fs, "/"+ProfileList, 1<<20); e == nil {
-		known = parseProfileList(b)
+	b, e := ReadFile(fs, "/"+ProfileList, 1<<20)
+	if e != nil {
+		return nil, ErrNoProfileList
 	}
+	known := parseProfileList(b)
 	var walk func(string, int) error
 	walk = func(dir string, depth int) error {
 		if depth > 4 {
@@ -314,7 +315,13 @@ func Profiles(fs filesystem.FileSystem) ([]Profile, error) {
 			}
 			sum := sha256.Sum256(b)
 			id := strings.TrimPrefix(dir, "/")
-			info := profileInfoFor(known, id)
+			info, ok := known[id]
+			if !ok || info.Name == "" {
+				return fmt.Errorf("profile %s has no line in %s", id, ProfileList)
+			}
+			if info.Console == "" {
+				info.Console = info.Name
+			}
 			result = append(result, Profile{ID: id, Name: info.Name, Console: info.Console, AlsoFor: info.AlsoFor, Experimental: info.Experimental, Kernel: kernel, BootFiles: files, Hash: hex.EncodeToString(sum[:])})
 		}
 		return nil
@@ -352,6 +359,10 @@ func (p Profile) For(console string) bool {
 // "also=<console>;<console>" (listed under those consoles too).
 const ProfileList = "andr36oid-profiles.txt"
 
+// ErrNoProfileList is an image from before 2026-10-22, which names its profiles nowhere.
+var ErrNoProfileList = errors.New("this image is not compatible with this flasher: its BOOT partition has no " +
+	ProfileList + ". Choose an andr36oid release from 2026-10-22 or later")
+
 type profileInfo struct {
 	Name, Console string
 	AlsoFor       []string
@@ -388,17 +399,4 @@ func parseProfileList(b []byte) map[string]profileInfo {
 		m[strings.Trim(strings.TrimSpace(f[0]), "/")] = info
 	}
 	return m
-}
-
-// profileInfoFor is the image's entry for a profile folder. Images from before the
-// list show the folder's name, and the Experimental folder counts as experimental.
-func profileInfoFor(list map[string]profileInfo, id string) profileInfo {
-	if info, ok := list[id]; ok && info.Name != "" {
-		if info.Console == "" {
-			info.Console = info.Name
-		}
-		return info
-	}
-	s := strings.NewReplacer("-", " ", "_", " ").Replace(path.Base(id))
-	return profileInfo{Name: s, Console: s, Experimental: strings.HasPrefix(id, "Experimental/")}
 }
