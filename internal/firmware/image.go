@@ -13,7 +13,6 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -260,6 +259,10 @@ func validDTB(b []byte) bool {
 
 func Profiles(fs filesystem.FileSystem) ([]Profile, error) {
 	var result []Profile
+	var known map[string]profileInfo
+	if b, e := ReadFile(fs, "/"+ProfileList, 1<<20); e == nil {
+		known = parseProfileList(b)
+	}
 	var walk func(string, int) error
 	walk = func(dir string, depth int) error {
 		if depth > 4 {
@@ -310,8 +313,9 @@ func Profiles(fs filesystem.FileSystem) ([]Profile, error) {
 				return fmt.Errorf("incomplete profile %s: bootloader DTB missing", dir)
 			}
 			sum := sha256.Sum256(b)
-			label, console := ProfileName(path.Base(dir))
-			result = append(result, Profile{ID: strings.TrimPrefix(dir, "/"), Name: label, Console: console, AlsoFor: alsoFor[path.Base(dir)], Experimental: strings.Contains(dir, "Experimental"), Kernel: kernel, BootFiles: files, Hash: hex.EncodeToString(sum[:])})
+			id := strings.TrimPrefix(dir, "/")
+			info := profileInfoFor(known, id)
+			result = append(result, Profile{ID: id, Name: info.Name, Console: info.Console, AlsoFor: info.AlsoFor, Experimental: info.Experimental, Kernel: kernel, BootFiles: files, Hash: hex.EncodeToString(sum[:])})
 		}
 		return nil
 	}
@@ -326,8 +330,6 @@ func Profiles(fs filesystem.FileSystem) ([]Profile, error) {
 	return result, nil
 }
 
-var panelRE = regexp.MustCompile(`^Panel([0-6])$`)
-
 // For reports whether the profile is listed under console.
 func (p Profile) For(console string) bool {
 	if p.Console == console {
@@ -341,28 +343,62 @@ func (p Profile) For(console string) bool {
 	return false
 }
 
-// alsoFor lists profiles under more consoles than their own, by folder name.
-// R36S-V12 clones come wired like the G80 too: EE-G80-Panel8 gives them a picture
-// where EE-V12-Var2 leaves the screen lit but empty (tested on one, 2026-10-12).
-var alsoFor = map[string][]string{
-	"EE-G80-Panel8": {"R36S V12 clone"},
+// ProfileList is BOOT/andr36oid-profiles.txt: what the image says about its device
+// profiles, so the flasher carries no console data of its own. One line per profile:
+//
+//	folder|console|name|flags
+//
+// flags, comma separated: "experimental" (asked about before use) and
+// "also=<console>;<console>" (listed under those consoles too).
+const ProfileList = "andr36oid-profiles.txt"
+
+type profileInfo struct {
+	Name, Console string
+	AlsoFor       []string
+	Experimental  bool
 }
 
-func ProfileName(id string) (string, string) {
-	if m := panelRE.FindStringSubmatch(id); m != nil {
-		return "R36S — Panel " + m[1], "R36S"
+func parseProfileList(b []byte) map[string]profileInfo {
+	m := map[string]profileInfo{}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Split(line, "|")
+		if len(f) < 3 || f[0] == "" {
+			continue
+		}
+		info := profileInfo{Console: strings.TrimSpace(f[1]), Name: strings.TrimSpace(f[2])}
+		if len(f) > 3 {
+			for _, flag := range strings.Split(f[3], ",") {
+				flag = strings.TrimSpace(flag)
+				switch {
+				case flag == "experimental":
+					info.Experimental = true
+				case strings.HasPrefix(flag, "also="):
+					for _, c := range strings.Split(strings.TrimPrefix(flag, "also="), ";") {
+						if c = strings.TrimSpace(c); c != "" {
+							info.AlsoFor = append(info.AlsoFor, c)
+						}
+					}
+				}
+			}
+		}
+		m[strings.Trim(strings.TrimSpace(f[0]), "/")] = info
 	}
-	if n, ok := profileNames[id]; ok {
-		return n.Name, n.Console
-	}
-	s := strings.NewReplacer("-", " ", "_", " ").Replace(id)
-	return s, s
+	return m
 }
 
-var profileNames = map[string]struct{ Name, Console string }{
-	"R36S-Plus": {"R36S Plus — 720 × 720", "R36S Plus"}, "R50S": {"R50S", "R50S"}, "R46H": {"R46H", "R46H"}, "D-28S": {"Diium D-28S", "D-28S"}, "G350": {"BatleXP G350", "G350"},
-	"R36S-V21": {"R36S V21", "R36S"}, "R36S-V22": {"R36S V22", "R36S"}, "R36S-V21-2551-2552": {"R36S V21 — Batches 2551/2552", "R36S"}, "R36S-Y02-Y07": {"R36S Y02 / RG36S Y07", "R36S"}, "R36S-V30": {"R36S V30", "R36S"}, "R36S-V30-2603": {"R36S V30 — Batch 2603", "R36S"}, "R36S-Panel3-Alt": {"R36S — Panel 3 (alternate timings)", "R36S"},
-	"EE-G80-Panel8": {"G80C / G80CA / G80D / R36S V12 wired like the G80 — Panel 8", "G80"}, "EE-G80-Panel9": {"G80CA — Panel 9", "G80"}, "EE-K36-Panel1": {"K36 / HG36 / L35 / R36 Pro / ANS11 — Panel 1", "K36 / HG36"}, "Kinhank-K36": {"Kinhank K36", "K36 / HG36"}, "EE-K36-Panel4": {"K36 / RX6S — Panel 4", "K36 / HG36"}, "RX6H": {"RX6H", "RX6H"}, "EE-V12-Var1-Panel8": {"R36S V12 clone — Variant 1, Panel 8 (garbled picture with G80 Panel 8)", "R36S V12 clone"}, "EE-V12-Var2": {"R36S V12 clone — Variant 2", "R36S V12 clone"}, "EE-V12-Var3-Panel3": {"R36S V12 clone — Variant 3, Panel 3", "R36S V12 clone"}, "EE-V12-Var3-PanelA": {"R36S V12 clone — Variant 3, Panel A", "R36S V12 clone"},
-	"R36-Ultra": {"R36 Ultra / GR36 — 720 × 720", "R36 Ultra"}, "R36-Max": {"R36 Max — 720 × 720", "R36 Max"}, "R39-Max": {"R39 Max / H50 Pro / T16 Max V2 / ANS13 — 720 × 720", "R39 Max"}, "T16-Max": {"T16 Max — First revision, 720 × 720", "T16 Max"},
-	"Soy-Panel5": {"Soy Sauce — Panel 5", "Soy Sauce"}, "Soy-Panel5-253x": {"Soy Sauce — Panel 5, Batch 253x", "Soy Sauce"}, "Soy-Panel6": {"Soy Sauce — Panel 6", "Soy Sauce"}, "Soy-Panel7": {"Soy Sauce — Panel 7", "Soy Sauce"}, "Soy-Panel7-253x": {"Soy Sauce — Panel 7, Batch 253x", "Soy Sauce"}, "Soy-V04-Panel2": {"Soy Sauce Y3506 V04 — Panel 2", "Soy Sauce"}, "Soy-V05-2601": {"Soy Sauce Y3506 V05 — Batch 2601", "Soy Sauce"},
+// profileInfoFor is the image's entry for a profile folder. Images from before the
+// list show the folder's name, and the Experimental folder counts as experimental.
+func profileInfoFor(list map[string]profileInfo, id string) profileInfo {
+	if info, ok := list[id]; ok && info.Name != "" {
+		if info.Console == "" {
+			info.Console = info.Name
+		}
+		return info
+	}
+	s := strings.NewReplacer("-", " ", "_", " ").Replace(path.Base(id))
+	return profileInfo{Name: s, Console: s, Experimental: strings.HasPrefix(id, "Experimental/")}
 }
