@@ -175,6 +175,24 @@ func InspectCard(f io.ReaderAt, size int64) (Card, error) {
 			c.Kept[name] = b
 		}
 	}
+	for _, dir := range firmware.KeptDirs {
+		list, e := boot.ReadDir(dir)
+		if e != nil {
+			continue
+		}
+		for _, ent := range list {
+			if ent.IsDir() {
+				continue
+			}
+			name := dir + "/" + ent.Name()
+			if b, e := firmware.ReadFile(boot, "/"+name, firmware.KeptDirFileLimit); e == nil {
+				if c.Kept == nil {
+					c.Kept = map[string][]byte{}
+				}
+				c.Kept[name] = b
+			}
+		}
+	}
 	_, roms := t.Find("EASYROMS")
 	c.NoROMs = !roms
 	c.Table = t

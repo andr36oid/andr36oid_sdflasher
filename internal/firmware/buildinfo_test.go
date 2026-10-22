@@ -152,3 +152,35 @@ func TestPrepareBootLeavesBuildInfoOff(t *testing.T) {
 		f.Close()
 	}
 }
+
+// An update writes the user's hotfixes back into BOOT's hotfix folder.
+func TestPrepareBootKeepsHotfixes(t *testing.T) {
+	dir := t.TempDir()
+	im := fakeImage(t, dir)
+	keep := map[string][]byte{"hotfix/fix-audio.fix.zip": []byte("zip one"), "hotfix/b.fix.zip": []byte("zip two")}
+	for _, update := range []bool{false, true} {
+		out, e := PrepareBoot(im, "Panels/Panel4", false, update, "", dir, BootOptions{Keep: keep})
+		if e != nil {
+			t.Fatal(e)
+		}
+		f, e := os.Open(out)
+		if e != nil {
+			t.Fatal(e)
+		}
+		st, _ := f.Stat()
+		bfs, e := fat32.Read(file.New(f, true), st.Size(), 0, 512)
+		if e != nil {
+			t.Fatal(e)
+		}
+		for name, want := range keep {
+			got, e := ReadFile(bfs, "/"+name, 1<<20)
+			if update && (e != nil || string(got) != string(want)) {
+				t.Errorf("update: %s is %q, %v", name, got, e)
+			}
+			if !update && e == nil {
+				t.Errorf("fresh install wrote %s", name)
+			}
+		}
+		f.Close()
+	}
+}

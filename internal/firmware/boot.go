@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -28,6 +29,13 @@ var UBootDTBNames = []string{
 // additions there, the refresh rates the panel may use among them. The data card
 // marker of an eMMC install stays too: the card's next start offers to update the eMMC.
 var KeptFiles = []string{"kernel-tweaks.txt", "andr36oid-datacard.txt"}
+
+// KeptDirs are folders on BOOT whose files are the user's too: andr36oid's hotfixes
+// (.fix.zip), carried over on an update as "<folder>/<file>" in BootOptions.Keep. Files
+// right in the folder only, each up to KeptDirFileLimit.
+var KeptDirs = []string{"hotfix"}
+
+const KeptDirFileLimit = 64 << 20
 
 const CustomWarning = "Custom DTBs must be built specifically for andr36oid. DTBs from other custom firmwares are unlikely to work."
 
@@ -188,6 +196,29 @@ func PrepareBoot(im *Image, profile string, noROMs, updating bool, custom, dir s
 		for _, name := range KeptFiles {
 			if b, ok := keep[name]; ok {
 				if e = write(name, b); e != nil {
+					return "", e
+				}
+			}
+		}
+		for _, dir := range KeptDirs {
+			names := make([]string, 0)
+			for name := range keep {
+				if strings.HasPrefix(name, dir+"/") {
+					names = append(names, name)
+				}
+			}
+			if len(names) == 0 {
+				continue
+			}
+			// the image may ship the folder already (with its README)
+			if _, e = fs.ReadDir(dir); e != nil {
+				if e = fs.Mkdir(dir); e != nil {
+					return "", e
+				}
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				if e = write(name, keep[name]); e != nil {
 					return "", e
 				}
 			}
