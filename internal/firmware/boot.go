@@ -25,8 +25,10 @@ var UBootDTBNames = []string{
 
 // KeptFiles are the user's own settings on BOOT, carried over on an update: Kernel
 // Tweaks (andr36oid's Settings > System > Kernel Tweaks) saves the kernel command line
-// additions there, the refresh rates the panel may use among them.
-var KeptFiles = []string{"kernel-tweaks.txt"}
+// additions there, the refresh rates the panel may use among them, and a data-card
+// install records which card holds the user's data in andr36oid-datacard.txt (losing it
+// would mount the wrong userdata on the next boot).
+var KeptFiles = []string{"kernel-tweaks.txt", "andr36oid-datacard.txt"}
 
 const CustomWarning = "Custom DTBs must be built specifically for andr36oid. DTBs from other custom firmwares are unlikely to work."
 
