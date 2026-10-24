@@ -16,19 +16,56 @@ func list(all bool) ([]Drive, error) {
 	if all {
 		removable = ""
 	}
-	script := `$ErrorActionPreference='Stop'; $d=@(Get-Disk | Where-Object { -not $_.IsBoot -and -not $_.IsSystem -and -not $_.IsReadOnly -and $_.Size -ge 1GB` + removable + ` } | ForEach-Object { $v=@(Get-Partition -DiskNumber $_.Number -ErrorAction SilentlyContinue | ForEach-Object { $_.AccessPaths | Where-Object { $_.StartsWith('\\?\Volume{') } | ForEach-Object { $_.TrimEnd('\') } }); @{ path=('\\.\PhysicalDrive'+$_.Number); name=$_.FriendlyName; serial=$_.SerialNumber; size=[long]$_.Size; sector_size=[long]$_.LogicalSectorSize; volumes=$v; fixed=($_.BusType -notin @('USB','SD','MMC')) } }); ConvertTo-Json -InputObject $d -Compress -Depth 4`
+	// Enumerate each disk in its own try/catch so one disk that errors (a reader
+	// with no card, a provider hiccup) can't abort the whole list, and always
+	// emit a JSON array so a single match still unmarshals. Get-Disk itself stays
+	// under Stop, so a real storage-provider failure still surfaces (with its
+	// message, captured from stderr below) instead of a bare "exit status 1".
+	script := `$ErrorActionPreference='Stop'; $d=@(); foreach ($k in @(Get-Disk | Where-Object { -not $_.IsBoot -and -not $_.IsSystem -and -not $_.IsReadOnly -and $_.Size -ge 1GB` + removable + ` })) { try { $v=@(Get-Partition -DiskNumber $k.Number -ErrorAction SilentlyContinue | ForEach-Object { $_.AccessPaths } | Where-Object { $_ -and $_.StartsWith('\\?\Volume{') } | ForEach-Object { $_.TrimEnd('\') }); $d += @{ path=('\\.\PhysicalDrive'+$k.Number); name=$k.FriendlyName; serial=$k.SerialNumber; size=[long]$k.Size; sector_size=[long]$k.LogicalSectorSize; volumes=$v; fixed=($k.BusType -notin @('USB','SD','MMC')) } } catch {} }; ConvertTo-Json -InputObject @($d) -Compress -Depth 4`
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 	hide(cmd)
 	b, e := cmd.Output()
 	if e != nil {
+		// cmd.Stderr is nil, so ExitError carries PowerShell's own message; pass it
+		// through instead of just "exit status 1".
+		if ee, ok := e.(*exec.ExitError); ok {
+			if msg := firstLine(string(ee.Stderr)); msg != "" {
+				return nil, fmt.Errorf("%w: %s", e, msg)
+			}
+		}
 		return nil, e
 	}
+	// ConvertTo-Json unwraps a one-element array to a lone object on some
+	// PowerShell versions; accept either shape.
 	var ds []Drive
-	e = json.Unmarshal(b, &ds)
+	if trimmed := strings.TrimSpace(string(b)); trimmed == "" {
+		return nil, nil
+	} else if strings.HasPrefix(trimmed, "{") {
+		var one Drive
+		if e = json.Unmarshal(b, &one); e == nil {
+			ds = []Drive{one}
+		}
+	} else {
+		e = json.Unmarshal(b, &ds)
+	}
 	for i := range ds {
 		ds[i].Serial = strings.TrimSpace(ds[i].Serial)
 	}
 	return ds, e
+}
+
+// firstLine returns the first non-empty, trimmed line of s, capped so a huge
+// error can't flood the UI.
+func firstLine(s string) string {
+	for _, ln := range strings.Split(s, "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			if len(ln) > 300 {
+				ln = ln[:300]
+			}
+			return ln
+		}
+	}
+	return ""
 }
 func Open(d Drive, write bool) (*Handle, error) {
 	d, e := Revalidate(d)
