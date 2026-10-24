@@ -25,10 +25,10 @@ func diskInfo(args ...string) (map[string]any, error) {
 	return v, e
 }
 func list(all bool) ([]Drive, error) {
-	args := []string{"list", "-plist", "external", "physical"}
-	if all {
-		args = []string{"list", "-plist", "physical"}
-	}
+	// A built-in SD card reader sits on an internal bus, so "diskutil list
+	// external" never lists the card. List every physical disk and keep only
+	// removable media below; the disk the computer runs from stays protected.
+	args := []string{"list", "-plist", "physical"}
 	v, e := diskInfo(args...)
 	if e != nil {
 		return nil, e
@@ -81,16 +81,21 @@ func list(all bool) ([]Drive, error) {
 			continue
 		}
 		internal, _ := inf["Internal"].(bool)
+		ejectable, _ := inf["Ejectable"].(bool)
+		removable, _ := inf["RemovableMediaOrExternalDevice"].(bool)
 		writable, _ := inf["Writable"].(bool)
 		whole, _ := inf["Whole"].(bool)
-		if (internal && !all) || !writable || !whole {
+		// A card in a built-in reader is Internal but ejectable/removable; only a
+		// truly fixed internal disk (the system SSD) is hidden unless ListAll asks.
+		fixed := internal && !ejectable && !removable
+		if (fixed && !all) || !writable || !whole {
 			continue
 		}
 		size, _ := inf["TotalSize"].(float64)
 		sec, _ := inf["DeviceBlockSize"].(float64)
 		name, _ := inf["MediaName"].(string)
 		serial, _ := inf["DiskUUID"].(string)
-		out = append(out, Drive{Path: "/dev/" + id, Name: name, Serial: serial, Size: int64(size), SectorSize: int64(sec), Fixed: internal})
+		out = append(out, Drive{Path: "/dev/" + id, Name: name, Serial: serial, Size: int64(size), SectorSize: int64(sec), Fixed: fixed})
 	}
 	return out, nil
 }
