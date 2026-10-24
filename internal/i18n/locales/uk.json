@@ -126,6 +126,8 @@
   "Preparing to write. Keep the card connected.": "Підготовка до запису. Не від’єднуй картку.",
   "Preserved": "Збережено",
   "Quit": "Вийти",
+  "The flasher can't start": "Не вдається запустити Flasher",
+  "The disk helper that writes the card is missing. If you launched this from inside the downloaded zip, unzip the whole download first and run the flasher from the extracted folder — keep both andr36oid SD Flasher files together.": "Відсутній дисковий помічник, який записує картку. Якщо ти запустив Flasher прямо зі завантаженого ZIP-архіву, спершу розпакуй усе завантаження та запусти Flasher із розпакованої теки — тримай обидва файли andr36oid SD Flasher разом.",
   "Reading the card before writing": "Читання картки перед записом",
   "Ready": "Готово",
   "Recommended size": "Рекомендований розмір",

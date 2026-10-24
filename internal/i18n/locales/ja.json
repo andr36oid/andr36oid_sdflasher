@@ -126,6 +126,8 @@
   "Preparing to write. Keep the card connected.": "書き込みの準備をしています。カードは接続したままにしてください。",
   "Preserved": "保持",
   "Quit": "終了",
+  "The flasher can't start": "フラッシャーを起動できません",
+  "The disk helper that writes the card is missing. If you launched this from inside the downloaded zip, unzip the whole download first and run the flasher from the extracted folder — keep both andr36oid SD Flasher files together.": "カードに書き込むディスクヘルパーが見つかりません。ダウンロードした ZIP の中から直接フラッシャーを起動した場合は、まずダウンロード全体を展開し、展開したフォルダーからフラッシャーを実行してください。andr36oid SD Flasher の2つのファイルは一緒に保管してください。",
   "Reading the card before writing": "書き込み前にカードを読み取っています",
   "Ready": "準備完了",
   "Recommended size": "推奨サイズ",

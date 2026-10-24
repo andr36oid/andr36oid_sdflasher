@@ -126,6 +126,8 @@
   "Preparing to write. Keep the card connected.": "Preparando a gravação. Deixe o cartão conectado.",
   "Preserved": "Preservado",
   "Quit": "Sair",
+  "The flasher can't start": "O flasher não consegue iniciar",
+  "The disk helper that writes the card is missing. If you launched this from inside the downloaded zip, unzip the whole download first and run the flasher from the extracted folder — keep both andr36oid SD Flasher files together.": "O auxiliar de disco que grava o cartão está faltando. Se você abriu o flasher de dentro do ZIP baixado, descompacte primeiro todo o download e execute o flasher a partir da pasta extraída — mantenha os dois arquivos do andr36oid SD Flasher juntos.",
   "Reading the card before writing": "Lendo o cartão antes de gravar",
   "Ready": "Pronto",
   "Recommended size": "Tamanho recomendado",

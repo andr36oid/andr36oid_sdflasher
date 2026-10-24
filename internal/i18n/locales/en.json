@@ -126,6 +126,8 @@
   "Preparing to write. Keep the card connected.": "Preparing to write. Keep the card connected.",
   "Preserved": "Preserved",
   "Quit": "Quit",
+  "The flasher can't start": "The flasher can't start",
+  "The disk helper that writes the card is missing. If you launched this from inside the downloaded zip, unzip the whole download first and run the flasher from the extracted folder — keep both andr36oid SD Flasher files together.": "The disk helper that writes the card is missing. If you launched this from inside the downloaded zip, unzip the whole download first and run the flasher from the extracted folder — keep both andr36oid SD Flasher files together.",
   "Reading the card before writing": "Reading the card before writing",
   "Ready": "Ready",
   "Recommended size": "Recommended size",
