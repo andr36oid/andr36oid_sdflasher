@@ -184,15 +184,35 @@ func Worker(job string) error {
 	}
 	return nil
 }
+func helperName() string {
+	name := "andr36oid-sdflasher-helper"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return name
+}
+
+// HelperAvailable reports whether the privileged disk helper sits next to the
+// app. The UI calls this at startup so it can refuse clearly, instead of only
+// failing once a card job runs: a common mistake is launching the executable
+// straight from inside the downloaded zip, which leaves the helper behind.
+func HelperAvailable() error {
+	exe, e := os.Executable()
+	if e != nil {
+		return e
+	}
+	if _, e = os.Stat(filepath.Join(filepath.Dir(exe), helperName())); e != nil {
+		return fmt.Errorf("disk helper missing: keep both application files together: %w", e)
+	}
+	return nil
+}
+
 func helper(dir string) (string, error) {
 	exe, e := os.Executable()
 	if e != nil {
 		return "", e
 	}
-	name := "andr36oid-sdflasher-helper"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
+	name := helperName()
 	src := filepath.Join(filepath.Dir(exe), name)
 	if _, e = os.Stat(src); e != nil {
 		return "", fmt.Errorf("disk helper missing: keep both application files together: %w", e)

@@ -91,12 +91,28 @@ func Run() {
 		}
 		w.Close()
 	})
+	if e := jobs.HelperAvailable(); e != nil {
+		s.showHelperMissing()
+		w.ShowAndRun()
+		return
+	}
 	if a.Preferences().Bool("sd-card-advice-v1") {
 		s.start()
 	} else {
 		s.showCardAdvice()
 	}
 	w.ShowAndRun()
+}
+
+// showHelperMissing fills the window with a plain explanation when the disk
+// helper isn't beside the app — most often because the executable was run from
+// inside the downloaded zip rather than an extracted folder.
+func (s *screen) showHelperMissing() {
+	title := wrapped(s.t("The flasher can't start"))
+	title.TextStyle = fyne.TextStyle{Bold: true}
+	body := wrapped(s.t("The disk helper that writes the card is missing. If you launched this from inside the downloaded zip, unzip the whole download first and run the flasher from the extracted folder — keep both andr36oid SD Flasher files together."))
+	quit := widget.NewButton(s.t("Quit"), func() { s.win.Close() })
+	s.win.SetContent(container.NewBorder(nil, container.NewHBox(quit), nil, nil, container.NewVBox(title, body)))
 }
 func (s *screen) t(key string, args ...any) string { return i18n.Text(s.locale, key, args...) }
 
