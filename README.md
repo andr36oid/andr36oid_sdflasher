@@ -1,8 +1,5 @@
-# warn
-as of right now, no publically available release of andr36oid is compatible with this tool. the next release will require using this tool if you are updating. if you are flashing a fresh sd card, this tool will make the process easier.
-
 # what this
-The next version of andr36oid will introduce a new partition layout. New users can flash with a tool like Rufus, but existing SD cards need to be repartitioned.
+andr36oid now uses a Project Treble partition layout for the SD card. New users can flash with a tool like Rufus (losing the ability to set how big EASYROMS should be), but existing SD cards need to be repartitioned.
 
 An ordinary flash would render the system unbootable or with data loss. This tool can alter the partition table of an existing install of andr36oid to the new format, as well as flesh any other SD card with our image.
 
