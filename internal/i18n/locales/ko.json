@@ -1,4 +1,5 @@
 {
+  "Assigned on first boot": "첫 부팅 시 할당됨",
   "%d device profiles": "기기 프로필 %d개",
   "%s is not a removable card. If it is the wrong disk, what is on it is destroyed and cannot be recovered. Check the name and the size once more before you go on.": "%s은(는) 이동식 카드가 아니에요. 잘못된 디스크를 선택하면 그 안의 데이터가 모두 삭제되고 복구할 수 없어요. 계속하기 전에 이름과 용량을 다시 한번 확인하세요.",
   "16 GB is the minimum. For Android, we recommend at least 32 GB. 128 GB is the sweet spot for Android and EASYROMS to fit comfortably.": "최소 16 GB가 필요해요. Android용으로는 32 GB 이상을 추천해요. Android와 EASYROMS를 여유 있게 담으려면 128 GB가 가장 적당해요.",
@@ -119,7 +120,6 @@
   "Options": "옵션",
   "Paste": "붙여넣기",
   "Pending": "대기",
-  "Pending · Writing · Written · Verified · Preserved": "대기 · 기록 중 · 기록됨 · 검증됨 · 보존됨",
   "Please check": "확인하세요",
   "Preparing the system image": "시스템 이미지 준비 중",
   "Preparing to write. Keep the card connected.": "기록을 준비하고 있어요. 카드를 연결해 두세요.",

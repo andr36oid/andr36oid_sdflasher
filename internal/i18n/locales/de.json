@@ -1,4 +1,5 @@
 {
+  "Assigned on first boot": "Wird beim ersten Start zugewiesen",
   "%d device profiles": "%d Geräteprofile",
   "%s is not a removable card. If it is the wrong disk, what is on it is destroyed and cannot be recovered. Check the name and the size once more before you go on.": "%s ist kein Wechselmedium. Ist es der falsche Datenträger, sind die Daten darauf unwiderruflich verloren. Prüfe Name und Größe noch einmal, bevor du weitermachst.",
   "16 GB is the minimum. For Android, we recommend at least 32 GB. 128 GB is the sweet spot for Android and EASYROMS to fit comfortably.": "16 GB sind das Minimum. Für Android empfehlen wir mindestens 32 GB. Mit 128 GB haben Android und EASYROMS bequem Platz.",
@@ -119,7 +120,6 @@
   "Options": "Optionen",
   "Paste": "Einfügen",
   "Pending": "Ausstehend",
-  "Pending · Writing · Written · Verified · Preserved": "Ausstehend · Wird geschrieben · Geschrieben · Geprüft · Unverändert",
   "Please check": "Bitte prüfen",
   "Preparing the system image": "System-Image wird vorbereitet",
   "Preparing to write. Keep the card connected.": "Schreiben wird vorbereitet. Lass die Karte angeschlossen.",

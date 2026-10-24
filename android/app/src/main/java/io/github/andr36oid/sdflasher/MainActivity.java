@@ -32,7 +32,8 @@ public final class MainActivity extends Activity {
   private TextView systemLabel;
   private FrameLayout page;
   private Button updateNotice;
-  private TextView imageLabel, cardLabel, status, customLabel, mapLegend;
+  private TextView imageLabel, cardLabel, status, customLabel;
+  private View mapLegend;
   private Button language, console, profile, chooseCard, action;
   private final List<View> controls = new ArrayList<>();
   private CheckBox noROMs;
@@ -163,6 +164,37 @@ public final class MainActivity extends Activity {
     view.setPadding(0, dp(9), 0, dp(9));
     target.addView(view);
     return view;
+  }
+
+  // The map legend: a colored swatch and a name per state. Native View swatches are
+  // drawn on every device, unlike the plain text line that showed no colors before.
+  private View legendView() {
+    LinearLayout box = new LinearLayout(this);
+    box.setOrientation(LinearLayout.VERTICAL);
+    box.setPadding(0, dp(6), 0, dp(6));
+    int[] swatchColors = {
+      getColor(R.color.map_pending), 0xffed2020, 0xff0076ff, 0xff163caf, 0xff00cccc, 0xff60aa6e
+    };
+    String[] keys = {"Pending", "Writing", "Written", "Verified", "Preserved", "Assigned on first boot"};
+    for (int i = 0; i < keys.length; i++) {
+      LinearLayout row = new LinearLayout(this);
+      row.setOrientation(LinearLayout.HORIZONTAL);
+      row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+      row.setPadding(0, dp(3), 0, dp(3));
+      View swatch = new View(this);
+      swatch.setBackgroundColor(swatchColors[i]);
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(14), dp(14));
+      lp.rightMargin = dp(8);
+      row.addView(swatch, lp);
+      TextView text = new TextView(this);
+      text.setText(t(keys[i]));
+      text.setTextSize(14);
+      text.setTextColor(getColor(R.color.body_text));
+      row.addView(text);
+      box.addView(row);
+    }
+    target.addView(box);
+    return box;
   }
 
   private Button button(String key, View.OnClickListener action) {
@@ -446,7 +478,7 @@ public final class MainActivity extends Activity {
     action = button("Erase and write this card…", v -> review());
     map = new DiskMap(this);
     target.addView(map, new LinearLayout.LayoutParams(-1, dp(160)));
-    mapLegend = label(t("Pending · Writing · Written · Verified · Preserved"), false);
+    mapLegend = legendView();
 
     target = body;
     progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);

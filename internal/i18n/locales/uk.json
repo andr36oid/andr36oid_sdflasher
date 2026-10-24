@@ -1,4 +1,5 @@
 {
+  "Assigned on first boot": "Призначається під час першого запуску",
   "%d device profiles": "Профілів пристроїв: %d",
   "%s is not a removable card. If it is the wrong disk, what is on it is destroyed and cannot be recovered. Check the name and the size once more before you go on.": "%s не є знімною карткою. Якщо це не той диск, усе, що на ньому є, буде знищено й не може бути відновлено. Ще раз перевір назву й розмір, перш ніж продовжити.",
   "16 GB is the minimum. For Android, we recommend at least 32 GB. 128 GB is the sweet spot for Android and EASYROMS to fit comfortably.": "Мінімум — 16 ГБ. Для Android радимо хоча б 32 ГБ. Оптимально — 128 ГБ: вистачить місця і для Android, і для EASYROMS.",
@@ -119,7 +120,6 @@
   "Options": "Параметри",
   "Paste": "Вставити",
   "Pending": "Очікування",
-  "Pending · Writing · Written · Verified · Preserved": "Очікування · Запис · Записано · Перевірено · Збережено",
   "Please check": "Перевір",
   "Preparing the system image": "Підготовка образу системи",
   "Preparing to write. Keep the card connected.": "Підготовка до запису. Не від’єднуй картку.",

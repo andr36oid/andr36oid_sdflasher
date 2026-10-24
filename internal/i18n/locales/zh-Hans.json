@@ -1,4 +1,5 @@
 {
+  "Assigned on first boot": "首次启动时分配",
   "%d device profiles": "%d 个设备配置",
   "%s is not a removable card. If it is the wrong disk, what is on it is destroyed and cannot be recovered. Check the name and the size once more before you go on.": "%s 不是可移动存储卡。如果这是错误的磁盘，其中的内容将被永久销毁，无法恢复。继续之前请再次核对名称和容量。",
   "16 GB is the minimum. For Android, we recommend at least 32 GB. 128 GB is the sweet spot for Android and EASYROMS to fit comfortably.": "至少需要 16 GB。运行 Android 推荐 32 GB 起步。128 GB 最合适，能让 Android 和 EASYROMS 都有充裕空间。",
@@ -119,7 +120,6 @@
   "Options": "选项",
   "Paste": "粘贴",
   "Pending": "等待中",
-  "Pending · Writing · Written · Verified · Preserved": "等待中 · 正在写入 · 已写入 · 已验证 · 已保留",
   "Please check": "请检查",
   "Preparing the system image": "正在准备系统镜像",
   "Preparing to write. Keep the card connected.": "正在准备写入。保持存储卡连接。",
