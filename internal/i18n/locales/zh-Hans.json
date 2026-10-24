@@ -127,7 +127,7 @@
   "Preserved": "已保留",
   "Quit": "退出",
   "The flasher can't start": "Flasher 无法启动",
-  "The disk helper that writes the card is missing. If you launched this from inside the downloaded zip, unzip the whole download first and run the flasher from the extracted folder — keep both andr36oid SD Flasher files together.": "用于写入存储卡的磁盘助手缺失。如果你直接在下载的 ZIP 压缩包内运行了 Flasher，请先解压整个下载内容，再从解压后的文件夹中运行 Flasher——请将 andr36oid SD Flasher 的两个文件放在一起。",
+  "The disk helper that writes the card is missing. If you launched this from inside the downloaded zip, unzip the whole download first and run the flasher from the extracted folder — keep both andr36oid SD Flasher files together.": "找不到用于写入存储卡的磁盘助手。如果直接在下载的 ZIP 文件内运行了 Flasher，请先解压整个下载内容，再从解压后的文件夹中运行 Flasher——请将 andr36oid SD Flasher 的文件保存在同一个文件夹里。",
   "Reading the card before writing": "写入前正在读取存储卡",
   "Ready": "就绪",
   "Recommended size": "推荐大小",

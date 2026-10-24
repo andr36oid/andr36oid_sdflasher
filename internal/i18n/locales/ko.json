@@ -127,7 +127,7 @@
   "Preserved": "보존됨",
   "Quit": "종료",
   "The flasher can't start": "Flasher를 시작할 수 없어요",
-  "The disk helper that writes the card is missing. If you launched this from inside the downloaded zip, unzip the whole download first and run the flasher from the extracted folder — keep both andr36oid SD Flasher files together.": "카드에 기록하는 디스크 도우미가 없어요. 다운로드한 ZIP 안에서 Flasher를 바로 실행했다면, 먼저 전체 다운로드의 압축을 풀고 압축 해제된 폴더에서 Flasher를 실행하세요 — andr36oid SD Flasher 파일 두 개를 함께 보관하세요.",
+  "The disk helper that writes the card is missing. If you launched this from inside the downloaded zip, unzip the whole download first and run the flasher from the extracted folder — keep both andr36oid SD Flasher files together.": "카드에 기록하는 디스크 도우미가 없어요. 다운로드한 ZIP 안에서 Flasher를 바로 실행했다면, 먼저 전체 다운로드의 압축을 해제하고 압축을 해제한 폴더에서 Flasher를 실행하세요 — andr36oid SD Flasher 파일 두 개를 함께 보관하세요.",
   "Reading the card before writing": "쓰기 전에 카드 읽는 중",
   "Ready": "준비됨",
   "Recommended size": "권장 크기",
