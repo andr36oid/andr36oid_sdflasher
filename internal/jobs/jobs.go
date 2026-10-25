@@ -16,29 +16,33 @@ import (
 )
 
 type Request struct {
-	Recovery        string         `json:"recovery,omitempty"`
-	Action          string         `json:"action"`
-	Drive           platform.Drive `json:"drive"`
-	Image           string         `json:"image,omitempty"`
-	ImageHash       string         `json:"image_hash,omitempty"`
-	ImageSource     string         `json:"image_source,omitempty"`
-	CardFingerprint string         `json:"card_fingerprint,omitempty"`
-	Mode            string         `json:"mode,omitempty"`
-	Profile         string         `json:"profile,omitempty"`
-	NoROMs          bool           `json:"no_roms,omitempty"`
-	UserdataGiB     int            `json:"userdata_gib,omitempty"`
-	CustomDTB       string         `json:"custom_dtb,omitempty"`
-	CustomAccepted  bool           `json:"custom_accepted,omitempty"`
-	ConvertDTB      bool           `json:"convert_dtb,omitempty"`
-	SystemImage     string         `json:"system_image,omitempty"`
-	SystemAccepted  bool           `json:"system_accepted,omitempty"`
+	HotfixOffer     *firmware.HotfixOffer `json:"hotfix_offer,omitempty"`
+	HotfixFiles     []string              `json:"hotfix_files,omitempty"`
+	Recovery        string                `json:"recovery,omitempty"`
+	Action          string                `json:"action"`
+	Drive           platform.Drive        `json:"drive"`
+	Image           string                `json:"image,omitempty"`
+	ImageHash       string                `json:"image_hash,omitempty"`
+	ImageSource     string                `json:"image_source,omitempty"`
+	CardFingerprint string                `json:"card_fingerprint,omitempty"`
+	Mode            string                `json:"mode,omitempty"`
+	Profile         string                `json:"profile,omitempty"`
+	NoROMs          bool                  `json:"no_roms,omitempty"`
+	UserdataGiB     int                   `json:"userdata_gib,omitempty"`
+	CustomDTB       string                `json:"custom_dtb,omitempty"`
+	CustomAccepted  bool                  `json:"custom_accepted,omitempty"`
+	ConvertDTB      bool                  `json:"convert_dtb,omitempty"`
+	SystemImage     string                `json:"system_image,omitempty"`
+	SystemAccepted  bool                  `json:"system_accepted,omitempty"`
 }
 type Result struct {
-	Done     bool            `json:"done"`
-	Error    string          `json:"error,omitempty"`
-	Card     *flash.Card     `json:"card,omitempty"`
-	Progress *flash.Progress `json:"progress,omitempty"`
-	Backup   string          `json:"backup,omitempty"`
+	BuildIdentity string                  `json:"build_identity,omitempty"`
+	HotfixResults []firmware.HotfixResult `json:"hotfix_results,omitempty"`
+	Done          bool                    `json:"done"`
+	Error         string                  `json:"error,omitempty"`
+	Card          *flash.Card             `json:"card,omitempty"`
+	Progress      *flash.Progress         `json:"progress,omitempty"`
+	Backup        string                  `json:"backup,omitempty"`
 }
 
 func CacheDir() (string, error) {
@@ -91,6 +95,22 @@ func Worker(job string) error {
 			defer h.Close()
 			card, e := flash.InspectCard(h.File, d.Size)
 			result.Card = &card
+			return e
+		}
+		if req.Action == "hotfix-list" || req.Action == "hotfix-apply" {
+			h, e := platform.Open(d, req.Action == "hotfix-apply")
+			if e != nil {
+				return e
+			}
+			defer h.Close()
+			if req.Action == "hotfix-list" {
+				result.BuildIdentity, _, e = firmware.CardBuildIdentity(h.File, d.Size)
+				return e
+			}
+			h.Remount = true
+			result.HotfixResults, e = firmware.ApplyHotfixes(context.Background(), h.File, d.Size, req.HotfixOffer, req.HotfixFiles, dir, func(p firmware.HotfixProgress) {
+				emit(Result{Progress: &flash.Progress{Phase: p.Phase, Name: p.Name, Done: p.Done, Total: p.Total}})
+			})
 			return e
 		}
 

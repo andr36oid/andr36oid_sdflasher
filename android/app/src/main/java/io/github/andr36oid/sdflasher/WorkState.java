@@ -18,6 +18,13 @@ final class WorkState {
   static volatile JSONObject appUpdate;
   static boolean updateCheckStarted, updateShown;
   static volatile JSONObject image, card, progress, plan, speed;
+  static volatile JSONObject hotfixOffer;
+  static volatile org.json.JSONArray hotfixResults;
+  static volatile String hotfixMessage = "";
+  static volatile boolean hotfixAfterFlash;
+  static volatile boolean choosingHotfixCard;
+  static volatile UsbCard hotfixTarget;
+  static String hotfixCompletion = "", hotfixCompletionMessage = "", hotfixCompletionNote = "";
   static volatile org.json.JSONArray releases;
   static volatile String reviewOptions = "";
   static volatile boolean reviewReady = false;
@@ -47,6 +54,7 @@ final class WorkState {
     systemName = "";
     systemAccepted = false;
   }
+
   // The console's own DTB: converted while writing (convert_dtb). conversion is
   // the preview the user still has to accept; conversionRefused its reason.
   static volatile boolean convertDTB = false;

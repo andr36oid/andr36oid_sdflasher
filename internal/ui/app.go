@@ -279,6 +279,7 @@ func (s *screen) build() {
 	}
 	footer := container.NewVBox(
 		widget.NewSeparator(),
+		widget.NewButton(s.t("Apply hotfixes"), s.chooseHotfixCard),
 		container.NewBorder(nil, nil, s.back, s.next),
 		container.NewBorder(nil, nil, widget.NewButton(s.t("Restore an interrupted update…"), s.recover), widget.NewLabel("GPLv3 · "+Version)))
 	s.home = container.NewPadded(container.NewBorder(header, footer, nil, nil, container.NewVScroll(container.NewStack(pages...))))
@@ -816,6 +817,7 @@ func (s *screen) write(p *flash.Plan) {
 			} else {
 				details.SetText(s.t("Your card has been written and verified. Apps, settings, saves, and games were preserved.") + "\n" + s.t("Recovery backups") + ": " + result.Backup)
 			}
+			s.offerHotfixes(drive, s.im.BuildIdentity)
 		})
 	}()
 }

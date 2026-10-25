@@ -85,9 +85,12 @@ func progress(observer Observer, phase string) func(int64, int64) {
 }
 
 type Session struct {
-	mu    sync.Mutex
-	dir   string
-	image *firmware.Image
+	mu             sync.Mutex
+	dir            string
+	image          *firmware.Image
+	hotfixOffer    *firmware.HotfixOffer
+	hotfixIdentity string
+	hotfixURL      string // empty uses the published index
 }
 
 func NewSession(dir string) (*Session, error) {
@@ -409,3 +412,61 @@ func Translate(locale, key string) string { return i18n.Text(locale, key) }
 // MinCardBytes is the smallest card a new installation takes (flash.MinCardBytes).
 func MinCardBytes() int64                { return flash.MinCardBytes }
 func ResolveLocale(locale string) string { return i18n.Resolve(locale) }
+
+// FetchHotfixes reads the card's exact BOOT build and returns a matching checklist.
+// expectedBuild is the just-flashed image's build, or empty for standalone use.
+// ApplyHotfixes accepts only file names from this session's last successful offer.
+func (s *Session) FetchHotfixes(d Disk, expectedBuild string, observer Observer) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hotfixOffer = nil
+	s.hotfixIdentity = ""
+	dev, e := adapt(d)
+	if e != nil {
+		return "", e
+	}
+	emit(observer, flash.Progress{Phase: "Checking for hotfixes"})
+	build, _, e := firmware.CardBuildIdentity(dev, dev.size)
+	if e != nil {
+		return "", e
+	}
+	if expectedBuild != "" && expectedBuild != build {
+		return "", errors.New(firmware.HotfixChanged)
+	}
+	endpoint := s.hotfixURL
+	if endpoint == "" {
+		endpoint = firmware.HotfixIndexURL
+	}
+	index, e := firmware.FetchHotfixIndex(context.Background(), endpoint)
+	if e != nil {
+		return "", e
+	}
+	s.hotfixOffer = index.ForBuild(build)
+	s.hotfixIdentity = d.Identity()
+	return encode(s.hotfixOffer)
+}
+
+// ApplyHotfixes writes selected JSON file names, emits download/write progress,
+// and returns per-file results. A nonempty result error means that item failed.
+func (s *Session) ApplyHotfixes(d Disk, selected string, observer Observer) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d == nil || s.hotfixOffer == nil || d.Identity() != s.hotfixIdentity {
+		return "", errors.New(firmware.HotfixChanged)
+	}
+	var names []string
+	if e := json.Unmarshal([]byte(selected), &names); e != nil {
+		return "", e
+	}
+	dev, e := adapt(d)
+	if e != nil {
+		return "", e
+	}
+	results, e := firmware.ApplyHotfixes(context.Background(), dev, dev.size, s.hotfixOffer, names, s.dir, func(p firmware.HotfixProgress) {
+		emit(observer, flash.Progress{Phase: p.Phase, Name: p.Name, Done: p.Done, Total: p.Total})
+	})
+	if e != nil {
+		return "", e
+	}
+	return encode(results)
+}

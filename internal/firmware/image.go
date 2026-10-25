@@ -35,13 +35,14 @@ type Profile struct {
 	Hash         string   `json:"hash"`
 }
 type Image struct {
-	Source   string       `json:"source,omitempty"`
-	Path     string       `json:"path"`
-	Size     int64        `json:"size"`
-	Table    layout.Table `json:"table"`
-	Profiles []Profile    `json:"profiles"`
-	Version  string       `json:"version"`
-	SHA256   string       `json:"sha256"`
+	Source        string       `json:"source,omitempty"`
+	Path          string       `json:"path"`
+	Size          int64        `json:"size"`
+	Table         layout.Table `json:"table"`
+	Profiles      []Profile    `json:"profiles"`
+	Version       string       `json:"version"`
+	BuildIdentity string       `json:"build_identity"`
+	SHA256        string       `json:"sha256"`
 }
 
 func ReadFile(fs filesystem.FileSystem, name string, limit int64) ([]byte, error) {
@@ -200,6 +201,7 @@ func inspect(ctx context.Context, p string, progress func(int64, int64), digest 
 		return nil, errors.New("image has no complete shipped device profiles")
 	}
 	im := &Image{Source: p, Path: p, Size: st.Size(), Table: t, Profiles: profiles, Version: "Treble build"}
+	im.BuildIdentity = BuildIdentity(boot)
 	for _, line := range strings.Split(string(props), "\n") {
 		if strings.HasPrefix(line, "ro.andr36oid.version=") {
 			im.Version = strings.TrimPrefix(line, "ro.andr36oid.version=")

@@ -108,7 +108,7 @@ func TestReleaseFactsWithoutBootInfoIncompatible(t *testing.T) {
 	}
 }
 
-func TestPrepareBootLeavesBuildInfoOff(t *testing.T) {
+func TestPrepareBootKeepsBuildInfo(t *testing.T) {
 	dir := t.TempDir()
 	im := fakeImage(t, dir)
 	img, e := os.OpenFile(im.Path, os.O_RDWR, 0)
@@ -141,8 +141,8 @@ func TestPrepareBootLeavesBuildInfoOff(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, e := ReadFile(bfs, "/"+BuildInfoFile, 64<<10); e == nil {
-			t.Errorf("update %v: %s is still on BOOT", update, BuildInfoFile)
+		if got := BuildIdentity(bfs); got != "v2026-10-18-release|eng.kenny.20261018.0100" {
+			t.Errorf("update %v: build identity %q", update, got)
 		}
 		for _, n := range []string{"/rk3326-r36s-android.dtb", "/boot.ini-android", "/Panels/Panel4/rk3326-r36s-android.dtb"} {
 			if _, e := ReadFile(bfs, n, 4<<20); e != nil {

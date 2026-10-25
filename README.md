@@ -17,6 +17,10 @@ You do not need to download the andr36oid image. The flash tool will download it
 
 To update to future releases of andr36oid, simply run the flash tool again.
 
+Use **Apply hotfixes** to choose an existing card and copy fixes without reflashing. The flasher also offers hotfixes after a successful flash; you can skip that step. Bug fixes start checked, optional extras start unchecked, and you can change any selection. Downloads are checked for size and SHA-256 before they are copied to `BOOT/hotfix/`. The console applies them on its next boot.
+
+Hotfixes must match the card's exact build. The card needs `BOOT/andr36oid-build.txt`, which this flasher preserves when flashing a recent release. Older cards without that file cannot be offered hotfixes. Checking for hotfixes needs an internet connection; a failed check does not prevent flashing.
+
 ## thx
 to the Fyne Framework project for Go for multiplatform GUI
 to EtchDroid for the logic to flash USB devices on unrooted phones

@@ -40,6 +40,7 @@ public final class MainActivity extends Activity {
   private ProgressBar progress;
   private DiskMap map;
   private String lastError = "", lastResult = "";
+  private boolean hotfixDialogShown;
 
   private String t(String key, Object... args) {
     return I18n.text(this, key, args);
@@ -69,7 +70,10 @@ public final class MainActivity extends Activity {
               WorkState.pendingReader = null;
               if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false))
                 discover(pendingReader);
-              else showError(t("USB permission was denied."));
+              else {
+                WorkState.choosingHotfixCard = false;
+                showError(t("USB permission was denied."));
+              }
             }
           } else if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(intent.getAction())) {
             UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
@@ -463,6 +467,16 @@ public final class MainActivity extends Activity {
     next.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
     target = body;
     button("Restore an interrupted update…", v -> recover());
+    button(
+        "Apply hotfixes",
+        v -> {
+          if (WorkState.selected == null) {
+            WorkState.choosingHotfixCard = true;
+            readers();
+            return;
+          }
+          fetchHotfixes(WorkState.selected, "");
+        });
     button("About and licenses", v -> about());
     label(BuildConfig.VERSION_NAME + " · GPLv3", false);
     rendered = -1;
@@ -641,6 +655,7 @@ public final class MainActivity extends Activity {
     status.setText(
         WorkState.error.isEmpty()
             ? t(busy ? (phase.isEmpty() ? "Working…" : phase) : WorkState.message)
+                + (busy && p != null && p.has("name") ? ": " + t(p.optString("name")) : "")
             : t("Operation could not finish") + "\n" + WorkState.error);
     progress.setIndeterminate(busy && (p == null || p.optLong("total") == 0));
     if (p != null && p.optLong("total") > 0)
@@ -680,8 +695,29 @@ public final class MainActivity extends Activity {
     }
     if (!busy && !WorkState.error.isEmpty() && !WorkState.error.equals(lastError)) {
       lastError = WorkState.error;
+      WorkState.choosingHotfixCard = false;
       showError(WorkState.error);
     }
+    if (!busy && WorkState.hotfixAfterFlash) {
+      WorkState.hotfixAfterFlash = false;
+      fetchHotfixes(WorkState.hotfixTarget, WorkState.image.optString("build_identity"));
+      return;
+    }
+    if (!busy && !hotfixDialogShown && WorkState.hotfixOffer != null) showHotfixes();
+    if (!busy && !hotfixDialogShown && !WorkState.hotfixMessage.isEmpty()) {
+      hotfixDialogShown = true;
+      new AlertDialog.Builder(this)
+          .setTitle(t("Apply hotfixes"))
+          .setMessage(t(WorkState.hotfixMessage))
+          .setPositiveButton(t("Continue"), null)
+          .setOnDismissListener(
+              d -> {
+                WorkState.hotfixMessage = "";
+                finishHotfixes();
+              })
+          .show();
+    }
+    if (!busy && !hotfixDialogShown && WorkState.hotfixResults != null) showHotfixResults();
     if (!busy && !WorkState.result.isEmpty() && !WorkState.result.equals(lastResult)) {
       lastResult = WorkState.result;
       new AlertDialog.Builder(this)
@@ -928,7 +964,8 @@ public final class MainActivity extends Activity {
                 WorkState.conversionPath = file.getAbsolutePath();
               } catch (Exception e) {
                 // a refusal explains itself; it is not an operation error
-                WorkState.conversionRefused = e.getMessage() == null ? e.toString() : e.getMessage();
+                WorkState.conversionRefused =
+                    e.getMessage() == null ? e.toString() : e.getMessage();
                 WorkState.message = "Ready";
                 return;
               }
@@ -1066,6 +1103,7 @@ public final class MainActivity extends Activity {
   private void readers() {
     List<UsbCard> readers = UsbCard.readers(this);
     if (readers.isEmpty()) {
+      WorkState.choosingHotfixCard = false;
       info(
           "No removable cards found",
           "Connect a USB SD-card adapter directly. Internal SD slots, USB hubs, hard drives, and"
@@ -1097,6 +1135,7 @@ public final class MainActivity extends Activity {
                         PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
               }
             })
+        .setOnCancelListener(d -> WorkState.choosingHotfixCard = false)
         .show();
   }
 
@@ -1113,6 +1152,7 @@ public final class MainActivity extends Activity {
 
   private void chooseDiscovered(List<UsbCard> cards) {
     if (cards.isEmpty()) {
+      WorkState.choosingHotfixCard = false;
       info(
           "No removable cards found", "Insert a card with 512-byte logical sectors and try again.");
       return;
@@ -1126,10 +1166,16 @@ public final class MainActivity extends Activity {
     new AlertDialog.Builder(this)
         .setTitle(t("Select a microSD card"))
         .setItems(labels, (d, n) -> inspect(cards.get(n)))
+        .setOnCancelListener(d -> WorkState.choosingHotfixCard = false)
         .show();
   }
 
   private void inspect(UsbCard target) {
+    if (WorkState.choosingHotfixCard) {
+      WorkState.choosingHotfixCard = false;
+      fetchHotfixes(target, "");
+      return;
+    }
     Context app = getApplicationContext();
     WorkState.start(
         app,
@@ -1217,9 +1263,134 @@ public final class MainActivity extends Activity {
                                   + " card to a computer and copy APK files to its AUTOAPK drive."
                                   + " The console offers them during setup.";
                       WorkState.card = null;
+                      WorkState.hotfixTarget = target;
+                      WorkState.hotfixAfterFlash = true;
                     }
                   });
             })
+        .show();
+  }
+
+  private void fetchHotfixes(UsbCard target, String expectedBuild) {
+    if (WorkState.busy) return;
+    WorkState.hotfixTarget = target;
+    WorkState.hotfixCompletion = WorkState.result;
+    WorkState.hotfixCompletionMessage = WorkState.message;
+    WorkState.hotfixCompletionNote = WorkState.note;
+    Context app = getApplicationContext();
+    WorkState.start(
+        app,
+        true,
+        () -> {
+          try (UsbCard.Connection disk = target.open(app)) {
+            WorkState.hotfixOffer =
+                new JSONObject(
+                    WorkState.engine.fetchHotfixes(disk, expectedBuild, WorkState::event));
+            if (WorkState.hotfixOffer.getJSONArray("hotfixes").length() == 0) {
+              WorkState.hotfixOffer = null;
+              WorkState.hotfixMessage = "No hotfixes are available for this exact build.";
+            }
+          } catch (Exception e) {
+            WorkState.hotfixMessage = e.getMessage() == null ? e.toString() : e.getMessage();
+          }
+        });
+  }
+
+  private void finishHotfixes() {
+    hotfixDialogShown = false;
+    WorkState.hotfixOffer = null;
+    WorkState.hotfixResults = null;
+    WorkState.result = WorkState.hotfixCompletion;
+    WorkState.message = WorkState.hotfixCompletionMessage;
+    WorkState.note = WorkState.hotfixCompletionNote;
+    WorkState.hotfixCompletion = "";
+    WorkState.revision++;
+  }
+
+  private void showHotfixes() {
+    JSONObject offer = WorkState.hotfixOffer;
+    JSONArray list = offer.optJSONArray("hotfixes");
+    if (list == null) {
+      finishHotfixes();
+      return;
+    }
+    hotfixDialogShown = true;
+    String[] labels = new String[list.length()];
+    boolean[] checked = new boolean[list.length()];
+    for (int n = 0; n < list.length(); n++) {
+      JSONObject h = list.optJSONObject(n);
+      labels[n] =
+          h.optString("title")
+              + "\n"
+              + h.optString("description").replaceAll("\\s+", " ")
+              + "\n"
+              + t("Size: %.1f MiB", h.optLong("size") / (double) (1 << 20));
+      checked[n] = h.optString("type").equals("bugfix");
+    }
+    TextView hotfixTitle = new TextView(this);
+    hotfixTitle.setPadding(dp(24), dp(18), dp(24), dp(9));
+    hotfixTitle.setText(
+        t("Apply hotfixes")
+            + "\n\n"
+            + t(
+                "Bug fixes are selected. Optional extras are unchecked. Choose which hotfixes to"
+                    + " copy to the card."));
+    new AlertDialog.Builder(this)
+        .setCustomTitle(hotfixTitle)
+        .setMultiChoiceItems(labels, checked, (d, n, value) -> checked[n] = value)
+        .setNegativeButton(t("Skip hotfixes"), (d, w) -> finishHotfixes())
+        .setOnCancelListener(d -> finishHotfixes())
+        .setPositiveButton(
+            t("Apply selected hotfixes"),
+            (d, w) -> {
+              JSONArray selected = new JSONArray();
+              for (int n = 0; n < checked.length; n++)
+                if (checked[n]) selected.put(list.optJSONObject(n).optString("file"));
+              WorkState.hotfixOffer = null;
+              hotfixDialogShown = false;
+              UsbCard target = WorkState.hotfixTarget;
+              Context app = getApplicationContext();
+              WorkState.start(
+                  app,
+                  true,
+                  () -> {
+                    try (UsbCard.Connection disk = target.open(app)) {
+                      WorkState.hotfixResults =
+                          new JSONArray(
+                              WorkState.engine.applyHotfixes(
+                                  disk, selected.toString(), WorkState::event));
+                    } catch (Exception e) {
+                      WorkState.hotfixMessage =
+                          e.getMessage() == null ? e.toString() : e.getMessage();
+                    }
+                  });
+            })
+        .show();
+  }
+
+  private void showHotfixResults() {
+    hotfixDialogShown = true;
+    JSONArray results = WorkState.hotfixResults;
+    StringBuilder text = new StringBuilder();
+    if (results.length() == 0) text.append(t("No hotfixes selected.")).append("\n");
+    for (int n = 0; n < results.length(); n++) {
+      JSONObject result = results.optJSONObject(n);
+      if (result.optString("error").isEmpty())
+        text.append(t("Hotfix installed: %s", result.optString("file")));
+      else
+        text.append(t("Hotfix failed: %s", result.optString("file")))
+            .append("\n")
+            .append(t("Technical details"))
+            .append(": ")
+            .append(result.optString("error"));
+      text.append("\n\n");
+    }
+    text.append(t("Hotfixes will be applied when the console next starts."));
+    new AlertDialog.Builder(this)
+        .setTitle(t("Hotfix results"))
+        .setMessage(text)
+        .setPositiveButton(t("Continue"), null)
+        .setOnDismissListener(d -> finishHotfixes())
         .show();
   }
 

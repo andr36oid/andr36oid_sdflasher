@@ -11,13 +11,23 @@ import (
 
 // BuildInfoFile is on BOOT in images since 2026-10-18 (device/gameconsole/r36s/mkimg.sh
 // documents the format): the facts the image check needs, so system and vendor, EROFS
-// in those images, are never read. Only the image needs it: PrepareBoot leaves it off
-// the card.
+// in those images, are never read. It stays on the card so hotfixes can be matched
+// to the exact installed build.
 const BuildInfoFile = "andr36oid-build.txt"
 
-// BuildOnlyFiles are on the image's BOOT for the flasher alone and are removed from the
-// BOOT written to the card. Nothing else is ever removed this way.
-var BuildOnlyFiles = []string{BuildInfoFile}
+// BuildIdentity returns the exact identity used by the on-device hotfix applier.
+// Missing or incomplete build facts must never match an index entry.
+func BuildIdentity(boot filesystem.FileSystem) string {
+	b, e := ReadFile(boot, "/"+BuildInfoFile, 64<<10)
+	if e != nil {
+		return ""
+	}
+	m, ok := ParseBuildInfo(b)
+	if !ok || m["ro.andr36oid.version"] == "" || m["ro.product.build.version.incremental"] == "" {
+		return ""
+	}
+	return m["ro.andr36oid.version"] + "|" + m["ro.product.build.version.incremental"]
+}
 
 // ParseBuildInfo reads key=value lines. Only format=1 is understood: another or no
 // format line means the image is not compatible.
