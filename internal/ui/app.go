@@ -74,6 +74,11 @@ type screen struct {
 }
 
 func Run() {
+	// Drop any staging scratch left behind by an earlier run before showing the
+	// window, so the cache doesn't keep growing by a full image every flash.
+	if dir, e := jobs.CacheDir(); e == nil {
+		firmware.CleanWorkDir(dir)
+	}
 	a := app.NewWithID("io.github.andr36oid.sdflasher")
 	a.SetIcon(appIcon)
 	a.Settings().SetTheme(uiTheme())
@@ -361,6 +366,13 @@ func (s *screen) loadImage(p string) {
 		return
 	}
 	s.setBusy(true)
+	// The previous selection's staged image is now superseded; remove it so a
+	// session that tries several releases doesn't pile up decompressed copies.
+	if s.im != nil {
+		if dir, e := jobs.CacheDir(); e == nil {
+			firmware.CleanStagedImage(dir, s.im.Path)
+		}
+	}
 	s.im = nil
 	s.profile = ""
 	s.custom = ""
