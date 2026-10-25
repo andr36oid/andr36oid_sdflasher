@@ -40,6 +40,56 @@ type Backup struct {
 	Size      int64         `json:"size"`
 	Entries   []backupEntry `json:"entries"`
 	Protected []Range       `json:"protected"`
+	Anchors   []cardAnchor  `json:"anchors,omitempty"`
+}
+
+type cardAnchor struct {
+	Offset int64  `json:"offset"`
+	Length int64  `json:"length"`
+	SHA256 string `json:"sha256"`
+}
+
+// As on Android, sample both ends of every preserved partition. These bytes
+// survive the update, unlike the partition table and the backed-up write ranges.
+func identityRanges(size int64, protected []Range) ([]Range, error) {
+	var samples []Range
+	for _, r := range protected {
+		if r.Offset < 0 || r.Length <= 0 || r.Offset > size || r.Length > size-r.Offset {
+			return nil, errors.New("Recovery refused: the saved card identity is invalid.")
+		}
+		n := min(r.Length, 64<<10)
+		for _, off := range []int64{r.Offset, r.End() - n} {
+			samples = append(samples, Range{Offset: off, Length: n})
+		}
+	}
+	return samples, nil
+}
+
+func verifyBackupIdentity(ctx context.Context, dev io.ReaderAt, b *Backup) error {
+	if len(b.Anchors) == 0 {
+		return errors.New("Recovery refused: this backup has no saved card identity, so the original card cannot be confirmed.")
+	}
+	samples, e := identityRanges(b.Size, b.Protected)
+	if e != nil {
+		return e
+	}
+	if len(samples) != len(b.Anchors) {
+		return errors.New("Recovery refused: the saved card identity is invalid.")
+	}
+	for i, sample := range samples {
+		anchor := b.Anchors[i]
+		if anchor.Offset != sample.Offset || anchor.Length != sample.Length {
+			return errors.New("Recovery refused: the saved card identity is invalid.")
+		}
+		sum, e := firmware.Hash(ctx, io.NewSectionReader(dev, sample.Offset, sample.Length), sample.Length, nil)
+		if e != nil {
+			return fmt.Errorf("Recovery refused: the original card could not be confirmed because its preserved partitions could not be read: %w", e)
+		}
+		if sum != anchor.SHA256 {
+			return errors.New("Recovery refused: the preserved partitions do not match this backup. Select the original card and its matching backup.")
+		}
+	}
+	return nil
 }
 
 func copyRange(ctx context.Context, dst io.WriterAt, src io.ReaderAt, doff, soff, n int64, cb func(int64)) error {
@@ -278,6 +328,17 @@ func saveBackup(ctx context.Context, dev io.ReaderAt, p *Plan, dir string, notif
 		return nil, e
 	}
 	b := &Backup{Size: p.Size, Protected: p.Protected}
+	samples, e := identityRanges(p.Size, p.Protected)
+	if e != nil {
+		return nil, e
+	}
+	for _, sample := range samples {
+		sum, e := firmware.Hash(ctx, io.NewSectionReader(dev, sample.Offset, sample.Length), sample.Length, nil)
+		if e != nil {
+			return nil, e
+		}
+		b.Anchors = append(b.Anchors, cardAnchor{Offset: sample.Offset, Length: sample.Length, SHA256: sum})
+	}
 	for i, w := range p.Writes {
 		name := fmt.Sprintf("region-%03d.bin", i)
 		f, e := os.OpenFile(filepath.Join(dir, name), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
@@ -383,7 +444,18 @@ func (g *guardedDevice) WriteAt(b []byte, off int64) (int, error) {
 }
 
 // RestoreBackup verifies the saved regions completely before opening a write path.
+// Android verifies its separately saved card identity before calling this.
 func RestoreBackup(ctx context.Context, dst Device, dir string, size int64) error {
+	return restoreBackup(ctx, dst, dir, size, false)
+}
+
+// RestoreBackupForCard also requires the preserved content to identify the
+// original card. Desktop recovery must not rely on reader metadata alone.
+func RestoreBackupForCard(ctx context.Context, dst Device, dir string, size int64) error {
+	return restoreBackup(ctx, dst, dir, size, true)
+}
+
+func restoreBackup(ctx context.Context, dst Device, dir string, size int64, checkIdentity bool) error {
 	f, e := os.Open(filepath.Join(dir, "recovery.json"))
 	if e != nil {
 		return e
@@ -405,6 +477,11 @@ func RestoreBackup(ctx context.Context, dst Device, dir string, size int64) erro
 	}
 	if e = p.Validate(); e != nil {
 		return e
+	}
+	if checkIdentity {
+		if e = verifyBackupIdentity(ctx, dst, &b); e != nil {
+			return e
+		}
 	}
 	return restore(ctx, &guardedDevice{Device: dst, plan: p}, dir, &b)
 }

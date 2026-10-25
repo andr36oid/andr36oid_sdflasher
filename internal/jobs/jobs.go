@@ -134,7 +134,7 @@ func Worker(job string) error {
 			}
 			defer h.Close()
 			emit(Result{Progress: &flash.Progress{Phase: "restoring", Name: "Verifying and restoring the recovery backup"}})
-			return flash.RestoreBackup(context.Background(), h.File, req.Recovery, d.Size)
+			return flash.RestoreBackupForCard(context.Background(), h.File, req.Recovery, d.Size)
 		}
 		if req.Action != "write" {
 			return errors.New("unknown job action")
