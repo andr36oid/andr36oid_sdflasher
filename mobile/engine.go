@@ -97,11 +97,17 @@ func NewSession(dir string) (*Session, error) {
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		return nil, e
 	}
+	// Clear staging scratch from an earlier run so storage doesn't keep filling.
+	firmware.CleanWorkDir(dir)
 	return &Session{dir: dir}, nil
 }
 func (s *Session) Load(path string, observer Observer) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Drop the previous selection's staged image before staging the next one.
+	if s.image != nil {
+		firmware.CleanStagedImage(s.dir, s.image.Path)
+	}
 	s.image = nil
 	phase := "checking"
 	if ext := filepath.Ext(path); strings.EqualFold(ext, ".zip") || strings.EqualFold(ext, ".xz") {
