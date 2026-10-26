@@ -23,4 +23,5 @@ Hotfixes must match the card's exact build. The card needs `BOOT/andr36oid-build
 
 ## thx
 to the Fyne Framework project for Go for multiplatform GUI
+
 to EtchDroid for the logic to flash USB devices on unrooted phones
