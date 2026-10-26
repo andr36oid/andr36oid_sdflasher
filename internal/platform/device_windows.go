@@ -67,35 +67,63 @@ func firstLine(s string) string {
 	}
 	return ""
 }
+// Disk IOCTLs and the SET_DISK_ATTRIBUTES layout (ntdddisk.h). Taking the disk
+// offline force-dismounts every volume and, unlike per-volume locking, stops
+// Windows from auto-mounting any partition for as long as it stays offline,
+// including partitions this write creates. Version/Persist/Attributes offsets
+// line up on both amd64 and 386 (Version 4 + Persist 4 puts Attributes at 8).
+const (
+	ioctlSetDiskAttributes = 0x0007C0F4 // IOCTL_DISK_SET_DISK_ATTRIBUTES
+	ioctlUpdateProperties  = 0x00070140 // IOCTL_DISK_UPDATE_PROPERTIES
+	diskAttributeOffline   = 0x0000000000000001
+)
+
+type setDiskAttributes struct {
+	Version        uint32
+	Persist        uint32 // BOOLEAN Persist + BYTE Reserved1[3]; left 0 so it never persists across reboot
+	Attributes     uint64
+	AttributesMask uint64
+	Reserved2      [4]uint32
+}
+
+// setDiskOffline marks the physical disk offline (or back online) and makes
+// Windows re-read it so the change takes effect (dismount on offline, remount on
+// online). The handle must be opened for read and write.
+func setDiskOffline(h windows.Handle, offline bool) error {
+	attr := setDiskAttributes{Version: uint32(unsafe.Sizeof(setDiskAttributes{})), AttributesMask: diskAttributeOffline}
+	if offline {
+		attr.Attributes = diskAttributeOffline
+	}
+	var n uint32
+	e := windows.DeviceIoControl(h, ioctlSetDiskAttributes, (*byte)(unsafe.Pointer(&attr)), uint32(unsafe.Sizeof(attr)), nil, 0, &n, nil)
+	if e != nil {
+		return e
+	}
+	// Best effort: a reader that took the attribute should also accept the re-read.
+	windows.DeviceIoControl(h, ioctlUpdateProperties, nil, 0, nil, 0, &n, nil)
+	return nil
+}
+
 func Open(d Drive, write bool) (*Handle, error) {
 	d, e := Revalidate(d)
 	if e != nil {
 		return nil, e
 	}
 	var volumes []windows.Handle
+	offlined := false
+	path := d.Path
 	cleanup := func() {
 		for _, h := range volumes {
 			windows.CloseHandle(h)
 		}
-	}
-	if write {
-		for _, v := range d.Volumes {
-			p, e := windows.UTF16PtrFromString(v)
-			if e != nil {
-				cleanup()
-				return nil, e
-			}
-			h, e := windows.CreateFile(p, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
-			if e != nil {
-				cleanup()
-				return nil, e
-			}
-			volumes = append(volumes, h)
-			var n uint32
-			for _, op := range []uint32{0x90018, 0x90020} {
-				if e = windows.DeviceIoControl(h, op, nil, 0, nil, 0, &n, nil); e != nil {
-					cleanup()
-					return nil, fmt.Errorf("%s%s (%w)", BusyPrefix, v, e)
+		// Bring the disk back online so Windows re-reads the new table and mounts
+		// the card for the user. Done on a fresh handle because the write handle
+		// is closed first by Handle.Close.
+		if offlined {
+			if p, e := windows.UTF16PtrFromString(path); e == nil {
+				if rh, e := windows.CreateFile(p, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0); e == nil {
+					setDiskOffline(rh, false)
+					windows.CloseHandle(rh)
 				}
 			}
 		}
@@ -114,12 +142,49 @@ func Open(d Drive, write bool) (*Handle, error) {
 		cleanup()
 		return nil, e
 	}
+	// Validate capacity while the disk is still online; geometry queries are most
+	// reliable before any offline/dismount below.
 	var n uint32
 	var size int64
 	if e = windows.DeviceIoControl(h, 0x7405c, nil, 0, (*byte)(unsafe.Pointer(&size)), 8, &n, nil); e != nil || size != d.Size {
 		windows.CloseHandle(h)
 		cleanup()
 		return nil, fmt.Errorf("card capacity changed")
+	}
+	if write {
+		// Preferred path: take the whole disk offline. This clears every mounted
+		// volume at once and keeps Windows from re-mounting a partition mid-write
+		// (the raw image and the raw FAT writes to BOOT would otherwise be denied,
+		// especially when adding hotfixes after a fresh install re-creates the
+		// partitions). Fall back to per-volume lock and dismount for a reader whose
+		// driver rejects SET_DISK_ATTRIBUTES.
+		if setDiskOffline(h, true) == nil {
+			offlined = true
+		} else {
+			for _, v := range d.Volumes {
+				vp, e := windows.UTF16PtrFromString(v)
+				if e != nil {
+					windows.CloseHandle(h)
+					cleanup()
+					return nil, e
+				}
+				vh, e := windows.CreateFile(vp, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
+				if e != nil {
+					windows.CloseHandle(h)
+					cleanup()
+					return nil, e
+				}
+				volumes = append(volumes, vh)
+				var n uint32
+				for _, op := range []uint32{0x90018, 0x90020} { // FSCTL_LOCK_VOLUME, FSCTL_DISMOUNT_VOLUME
+					if e = windows.DeviceIoControl(vh, op, nil, 0, nil, 0, &n, nil); e != nil {
+						windows.CloseHandle(h)
+						cleanup()
+						return nil, fmt.Errorf("%s%s (%w)", BusyPrefix, v, e)
+					}
+				}
+			}
+		}
 	}
 	f := os.NewFile(uintptr(h), d.Path)
 	return &Handle{File: f, Cleanup: cleanup}, nil
