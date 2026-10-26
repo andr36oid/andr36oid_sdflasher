@@ -249,5 +249,10 @@
   "Recovery refused: the preserved partitions do not match this backup. Select the original card and its matching backup.": "복구가 거부되었습니다. 보존된 파티션이 이 백업과 일치하지 않습니다. 원래 카드와 일치하는 백업을 선택하세요.",
   "Recovery refused: the saved card identity is invalid.": "복구가 거부되었습니다. 저장된 카드 식별 정보가 유효하지 않습니다.",
   "Recovery refused: this backup has no saved card identity, so the original card cannot be confirmed.": "복구가 거부되었습니다. 이 백업에는 저장된 카드 식별 정보가 없으므로 원래 카드를 확인할 수 없습니다.",
-  "Short SCSI data transfer": "짧은 SCSI 데이터 전송"
+  "Short SCSI data transfer": "짧은 SCSI 데이터 전송",
+  "Clear cached files": "Clear cached files",
+  "Cached files: %s": "Cached files: %s",
+  "Keep backups": "Keep backups",
+  "Delete everything": "Delete everything",
+  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?"
 }

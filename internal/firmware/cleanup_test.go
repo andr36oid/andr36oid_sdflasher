@@ -89,3 +89,39 @@ func TestCleanStagedImage(t *testing.T) {
 	gone(t, staged)
 	present(t, user)
 }
+
+func TestWorkDirUsageAndClear(t *testing.T) {
+	dir := t.TempDir()
+	// scratch + reusable download cache + two operation dirs, one with a backup
+	write(t, filepath.Join(dir, "image-abc.img"))
+	write(t, filepath.Join(dir, "download-xyz"))
+	write(t, filepath.Join(dir, "deadbeef-release.img.xz"))
+	write(t, filepath.Join(dir, "operation-1", "image-staged.img"))
+	write(t, filepath.Join(dir, "operation-1", "recovery", "recovery.json"))
+	write(t, filepath.Join(dir, "operation-2", "image-staged.img"))
+
+	total, backupBytes, backupCount := WorkDirUsage(dir)
+	if total != 6 {
+		t.Fatalf("total = %d, want 6", total)
+	}
+	if backupCount != 1 || backupBytes != 2 {
+		t.Fatalf("backups = %d bytes over %d dirs, want 2 over 1", backupBytes, backupCount)
+	}
+
+	// keep backups: scratch and the no-backup operation go, the backup stays
+	// (its staged image stripped), the no-backup operation is removed whole.
+	ClearWorkDir(dir, false)
+	gone(t, filepath.Join(dir, "image-abc.img"))
+	gone(t, filepath.Join(dir, "download-xyz"))
+	gone(t, filepath.Join(dir, "deadbeef-release.img.xz"))
+	gone(t, filepath.Join(dir, "operation-2"))
+	gone(t, filepath.Join(dir, "operation-1", "image-staged.img"))
+	present(t, filepath.Join(dir, "operation-1", "recovery", "recovery.json"))
+
+	// delete backups too: nothing is left
+	ClearWorkDir(dir, true)
+	gone(t, filepath.Join(dir, "operation-1"))
+	if total, _, _ := WorkDirUsage(dir); total != 0 {
+		t.Fatalf("after full clear total = %d, want 0", total)
+	}
+}

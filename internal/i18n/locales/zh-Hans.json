@@ -249,5 +249,10 @@
   "Recovery refused: the preserved partitions do not match this backup. Select the original card and its matching backup.": "恢复被拒绝：保留的分区与此备份不匹配。请选择原卡及其匹配的备份。",
   "Recovery refused: the saved card identity is invalid.": "恢复被拒绝：保存的卡标识无效。",
   "Recovery refused: this backup has no saved card identity, so the original card cannot be confirmed.": "恢复被拒绝：此备份没有保存的卡标识，因此无法确认原卡。",
-  "Short SCSI data transfer": "短 SCSI 数据传输"
+  "Short SCSI data transfer": "短 SCSI 数据传输",
+  "Clear cached files": "Clear cached files",
+  "Cached files: %s": "Cached files: %s",
+  "Keep backups": "Keep backups",
+  "Delete everything": "Delete everything",
+  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?"
 }

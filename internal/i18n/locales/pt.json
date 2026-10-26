@@ -249,5 +249,10 @@
   "Recovery refused: the preserved partitions do not match this backup. Select the original card and its matching backup.": "Recuperação recusada: as partições preservadas não correspondem a esta cópia de segurança. Selecione o cartão original e a respetiva cópia de segurança.",
   "Recovery refused: the saved card identity is invalid.": "Recuperação recusada: a identidade guardada do cartão é inválida.",
   "Recovery refused: this backup has no saved card identity, so the original card cannot be confirmed.": "Recuperação recusada: esta cópia de segurança não tem uma identidade guardada do cartão, pelo que não é possível confirmar o cartão original.",
-  "Short SCSI data transfer": "Transferência de dados SCSI curta"
+  "Short SCSI data transfer": "Transferência de dados SCSI curta",
+  "Clear cached files": "Clear cached files",
+  "Cached files: %s": "Cached files: %s",
+  "Keep backups": "Keep backups",
+  "Delete everything": "Delete everything",
+  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?"
 }

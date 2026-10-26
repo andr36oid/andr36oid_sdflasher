@@ -61,6 +61,8 @@ type screen struct {
 	pages                               []*fyne.Container
 	stepButtons                         [stepCount]*widget.Button
 	back, next                          *widget.Button
+	cacheClear                          *widget.Button
+	cacheLabel                          *widget.Label
 	storage                             *fyne.Container
 	sizeLabel                           *widget.Label
 	sizeSlider                          *widget.Slider
@@ -282,11 +284,15 @@ func (s *screen) build() {
 	for _, p := range s.pages {
 		pages = append(pages, p)
 	}
+	s.cacheLabel = widget.NewLabel("")
+	s.cacheClear = widget.NewButton(s.t("Clear cached files"), s.clearCache)
 	footer := container.NewVBox(
 		widget.NewSeparator(),
 		widget.NewButton(s.t("Apply hotfixes"), s.chooseHotfixCard),
 		container.NewBorder(nil, nil, s.back, s.next),
+		container.NewBorder(nil, nil, s.cacheClear, s.cacheLabel),
 		container.NewBorder(nil, nil, widget.NewButton(s.t("Restore an interrupted update…"), s.recover), widget.NewLabel("GPLv3 · "+Version)))
+	s.showCacheUsage(cacheTotal())
 	s.home = container.NewPadded(container.NewBorder(header, footer, nil, nil, container.NewVScroll(container.NewStack(pages...))))
 	s.win.SetContent(s.home)
 	s.showStep(oldStep)
@@ -332,7 +338,90 @@ func (s *screen) setBusy(v bool) {
 			s.noROMs.Enable()
 		}
 	}
+	s.refreshCacheUsage()
 	s.ready()
+}
+
+// cacheTotal is the size of the flasher's cache directory, or 0 if it can't be
+// read. It walks the cache, so callers on the UI goroutine should keep it off
+// the hot path for a very large cache (refreshCacheUsage does the walk in the
+// background).
+func cacheTotal() int64 {
+	dir, e := jobs.CacheDir()
+	if e != nil {
+		return 0
+	}
+	total, _, _ := firmware.WorkDirUsage(dir)
+	return total
+}
+
+// showCacheUsage displays a cache size next to the Clear button and enables that
+// button only when there is something to clear and the flasher is idle. It must
+// run on the UI goroutine.
+func (s *screen) showCacheUsage(total int64) {
+	if s.cacheLabel == nil {
+		return
+	}
+	s.cacheLabel.SetText(s.t("Cached files: %s", humanBytes(total)))
+	if total > 0 && !s.busy {
+		s.cacheClear.Enable()
+	} else {
+		s.cacheClear.Disable()
+	}
+}
+
+// refreshCacheUsage measures the cache in the background and updates the display.
+// It is for live updates once the window is running; build() sets the initial
+// size synchronously with showCacheUsage.
+func (s *screen) refreshCacheUsage() {
+	if s.cacheLabel == nil {
+		return
+	}
+	go func() {
+		total := cacheTotal()
+		fyne.Do(func() { s.showCacheUsage(total) })
+	}()
+}
+
+// clearCache frees the flasher's cached downloads and unpacked images. If the
+// cache holds recovery backups, it asks first whether to delete those too.
+func (s *screen) clearCache() {
+	if s.busy {
+		return
+	}
+	dir, e := jobs.CacheDir()
+	if e != nil {
+		s.showError(e)
+		return
+	}
+	do := func(deleteBackups bool) {
+		firmware.ClearWorkDir(dir, deleteBackups)
+		s.refreshCacheUsage()
+	}
+	if _, _, backups := firmware.WorkDirUsage(dir); backups > 0 {
+		var d dialog.Dialog
+		keep := widget.NewButton(s.t("Keep backups"), func() { d.Hide(); do(false) })
+		del := widget.NewButton(s.t("Delete everything"), func() { d.Hide(); do(true) })
+		body := s.t("This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?", backups)
+		d = dialog.NewCustom(s.t("Clear cached files"), s.t("Cancel"), container.NewVBox(wrapped(body), container.NewHBox(keep, del)), s.win)
+		d.Show()
+		return
+	}
+	do(false)
+}
+
+// humanBytes renders a byte count as a short human-readable size.
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.0f KiB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
 func (s *screen) chooseImage() {
 	d := dialog.NewFileOpen(func(r fyne.URIReadCloser, e error) {
