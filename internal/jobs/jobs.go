@@ -46,7 +46,7 @@ type Result struct {
 }
 
 func CacheDir() (string, error) {
-	d, e := os.UserCacheDir()
+	d, e := cacheBase()
 	if e != nil {
 		return "", e
 	}
