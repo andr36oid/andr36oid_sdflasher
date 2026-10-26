@@ -250,9 +250,9 @@
   "Recovery refused: the saved card identity is invalid.": "恢复被拒绝：保存的卡标识无效。",
   "Recovery refused: this backup has no saved card identity, so the original card cannot be confirmed.": "恢复被拒绝：此备份没有保存的卡标识，因此无法确认原卡。",
   "Short SCSI data transfer": "短 SCSI 数据传输",
-  "Clear cached files": "Clear cached files",
-  "Cached files: %s": "Cached files: %s",
-  "Keep backups": "Keep backups",
-  "Delete everything": "Delete everything",
-  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?"
+  "Clear cached files": "清除缓存文件",
+  "Cached files: %s": "缓存文件：%s",
+  "Keep backups": "保留备份",
+  "Delete everything": "全部删除",
+  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "这将释放下载和解压缩的镜像所占用的空间。此外，你还有 %d 个仍可用于恢复的备份。也要删除这些备份吗？"
 }

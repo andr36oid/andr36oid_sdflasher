@@ -250,9 +250,9 @@
   "Recovery refused: the saved card identity is invalid.": "복구가 거부되었습니다. 저장된 카드 식별 정보가 유효하지 않습니다.",
   "Recovery refused: this backup has no saved card identity, so the original card cannot be confirmed.": "복구가 거부되었습니다. 이 백업에는 저장된 카드 식별 정보가 없으므로 원래 카드를 확인할 수 없습니다.",
   "Short SCSI data transfer": "짧은 SCSI 데이터 전송",
-  "Clear cached files": "Clear cached files",
-  "Cached files: %s": "Cached files: %s",
-  "Keep backups": "Keep backups",
-  "Delete everything": "Delete everything",
-  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?"
+  "Clear cached files": "캐시된 파일 삭제",
+  "Cached files: %s": "캐시된 파일: %s",
+  "Keep backups": "백업 유지",
+  "Delete everything": "모두 삭제",
+  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "다운로드하고 압축을 푼 이미지가 사용 중인 공간이 확보됩니다. 아직 복원할 수 있는 복구 백업이 %d개 있습니다. 이것도 삭제할까요?"
 }

@@ -250,9 +250,9 @@
   "Recovery refused: the saved card identity is invalid.": "Recuperación rechazada: la identidad guardada de la tarjeta no es válida.",
   "Recovery refused: this backup has no saved card identity, so the original card cannot be confirmed.": "Recuperación rechazada: esta copia de seguridad no tiene una identidad guardada de la tarjeta, por lo que no se puede confirmar la tarjeta original.",
   "Short SCSI data transfer": "Transferencia de datos SCSI incompleta",
-  "Clear cached files": "Clear cached files",
-  "Cached files: %s": "Cached files: %s",
-  "Keep backups": "Keep backups",
-  "Delete everything": "Delete everything",
-  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?"
+  "Clear cached files": "Borrar archivos en caché",
+  "Cached files: %s": "Archivos en caché: %s",
+  "Keep backups": "Conservar copias de seguridad",
+  "Delete everything": "Borrar todo",
+  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "Esto libera el espacio ocupado por las imágenes descargadas y descomprimidas. Además, tienes %d copias de seguridad de recuperación que aún podrías restaurar. ¿Borrarlas también?"
 }

@@ -250,9 +250,9 @@
   "Recovery refused: the saved card identity is invalid.": "リカバリを拒否しました。保存されているカード識別情報が無効です。",
   "Recovery refused: this backup has no saved card identity, so the original card cannot be confirmed.": "リカバリを拒否しました。このバックアップにはカード識別情報が保存されていないため、元のカードを確認できません。",
   "Short SCSI data transfer": "短いSCSIデータ転送",
-  "Clear cached files": "Clear cached files",
-  "Cached files: %s": "Cached files: %s",
-  "Keep backups": "Keep backups",
-  "Delete everything": "Delete everything",
-  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?"
+  "Clear cached files": "キャッシュされたファイルを削除",
+  "Cached files: %s": "キャッシュされたファイル: %s",
+  "Keep backups": "バックアップを保持",
+  "Delete everything": "すべて削除",
+  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "ダウンロードして展開したイメージが使用している容量を解放します。復元可能なリカバリーバックアップが%d件あります。これらも削除しますか？"
 }

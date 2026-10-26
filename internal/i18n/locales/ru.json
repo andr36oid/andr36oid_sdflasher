@@ -250,9 +250,9 @@
   "Recovery refused: the saved card identity is invalid.": "Восстановление отклонено: сохранённый идентификатор карты недействителен.",
   "Recovery refused: this backup has no saved card identity, so the original card cannot be confirmed.": "Восстановление отклонено: в этой резервной копии нет сохранённого идентификатора карты, поэтому исходную карту невозможно подтвердить.",
   "Short SCSI data transfer": "Неполная передача данных SCSI",
-  "Clear cached files": "Clear cached files",
-  "Cached files: %s": "Cached files: %s",
-  "Keep backups": "Keep backups",
-  "Delete everything": "Delete everything",
-  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?"
+  "Clear cached files": "Очистить кэшированные файлы",
+  "Cached files: %s": "Кэшированные файлы: %s",
+  "Keep backups": "Сохранить резервные копии",
+  "Delete everything": "Удалить всё",
+  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "Это освободит место, занятое загруженными и распакованными образами. Кроме того, у вас есть %d резервных копий, из которых ещё можно выполнить восстановление. Удалить и их?"
 }

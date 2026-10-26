@@ -250,9 +250,9 @@
   "Recovery refused: the saved card identity is invalid.": "रिकवरी अस्वीकार की गई: कार्ड की सहेजी गई पहचान अमान्य है।",
   "Recovery refused: this backup has no saved card identity, so the original card cannot be confirmed.": "रिकवरी अस्वीकार की गई: इस बैकअप में कार्ड की कोई सहेजी गई पहचान नहीं है, इसलिए मूल कार्ड की पुष्टि नहीं की जा सकती।",
   "Short SCSI data transfer": "अपूर्ण SCSI डेटा ट्रांसफ़र",
-  "Clear cached files": "Clear cached files",
-  "Cached files: %s": "Cached files: %s",
-  "Keep backups": "Keep backups",
-  "Delete everything": "Delete everything",
-  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?"
+  "Clear cached files": "कैश की गई फ़ाइलें साफ़ करें",
+  "Cached files: %s": "कैश की गई फ़ाइलें: %s",
+  "Keep backups": "बैकअप रखें",
+  "Delete everything": "सब कुछ हटाएँ",
+  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "इससे डाउनलोड की गई और अनपैक की गई इमेज द्वारा इस्तेमाल की गई जगह खाली हो जाएगी। आपके पास %d रिकवरी बैकअप भी हैं जिन्हें आप अभी पुनर्स्थापित कर सकते हैं। क्या उन्हें भी हटाना है?"
 }
