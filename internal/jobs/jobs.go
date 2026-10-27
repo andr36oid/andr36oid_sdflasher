@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/platform"
@@ -16,6 +17,7 @@ import (
 )
 
 type Request struct {
+	KernelOffer     *catalog.KernelOffer  `json:"kernel_offer,omitempty"`
 	HotfixOffer     *firmware.HotfixOffer `json:"hotfix_offer,omitempty"`
 	HotfixFiles     []string              `json:"hotfix_files,omitempty"`
 	Recovery        string                `json:"recovery,omitempty"`
@@ -36,13 +38,14 @@ type Request struct {
 	SystemAccepted  bool                  `json:"system_accepted,omitempty"`
 }
 type Result struct {
-	BuildIdentity string                  `json:"build_identity,omitempty"`
-	HotfixResults []firmware.HotfixResult `json:"hotfix_results,omitempty"`
-	Done          bool                    `json:"done"`
-	Error         string                  `json:"error,omitempty"`
-	Card          *flash.Card             `json:"card,omitempty"`
-	Progress      *flash.Progress         `json:"progress,omitempty"`
-	Backup        string                  `json:"backup,omitempty"`
+	KernelIdentity *firmware.KernelIdentity `json:"kernel_identity,omitempty"`
+	BuildIdentity  string                   `json:"build_identity,omitempty"`
+	HotfixResults  []firmware.HotfixResult  `json:"hotfix_results,omitempty"`
+	Done           bool                     `json:"done"`
+	Error          string                   `json:"error,omitempty"`
+	Card           *flash.Card              `json:"card,omitempty"`
+	Progress       *flash.Progress          `json:"progress,omitempty"`
+	Backup         string                   `json:"backup,omitempty"`
 }
 
 func CacheDir() (string, error) {
@@ -112,6 +115,46 @@ func Worker(job string) error {
 				emit(Result{Progress: &flash.Progress{Phase: p.Phase, Name: p.Name, Done: p.Done, Total: p.Total}})
 			})
 			return e
+		}
+		if req.Action == "kernel-list" {
+			h, err := platform.Open(d, false)
+			if err != nil {
+				return err
+			}
+			defer h.Close()
+			identity, _, err := firmware.CardKernelIdentity(h.File, d.Size)
+			result.KernelIdentity = &identity
+			return err
+		}
+		if req.Action == "kernel-apply" {
+			offer := req.KernelOffer
+			asset, err := catalog.DownloadKernel(context.Background(), offer, dir, func(n, total int64) {
+				emit(Result{Progress: &flash.Progress{Phase: "Downloading kernel update", Done: n, Total: total}})
+			})
+			if err != nil {
+				return err
+			}
+			defer os.Remove(asset)
+			bundle, err := firmware.ReadKernelArchive(asset)
+			if err != nil {
+				return err
+			}
+			if firmware.KernelVersion(bundle.Manifest.Version) != firmware.KernelVersion(offer.Version) || !firmware.KernelCompatible(bundle.Manifest.CompatibleBuilds, offer.Current.Build) {
+				return errors.New("kernel manifest does not match the offered release")
+			}
+			// Downloads may take a while: revalidate again before opening writable.
+			d, err = platform.Revalidate(req.Drive)
+			if err != nil {
+				return err
+			}
+			h, err := platform.Open(d, true)
+			if err != nil {
+				return err
+			}
+			h.Remount = true
+			defer h.Close()
+			emit(Result{Progress: &flash.Progress{Phase: "Writing and verifying kernel update"}})
+			return firmware.ApplyKernelUpdate(h.File, d.Size, bundle, offer.Current, dir)
 		}
 
 		if req.Action == "restore" {

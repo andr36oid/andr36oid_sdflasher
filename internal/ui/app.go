@@ -288,7 +288,7 @@ func (s *screen) build() {
 	s.cacheClear = widget.NewButton(s.t("Clear cached files"), s.clearCache)
 	footer := container.NewVBox(
 		widget.NewSeparator(),
-		widget.NewButton(s.t("Apply hotfixes"), s.chooseHotfixCard),
+		container.NewGridWithColumns(2, widget.NewButton(s.t("Apply hotfixes"), s.chooseHotfixCard), widget.NewButton(s.t("Check for kernel update"), s.chooseKernelCard)),
 		container.NewBorder(nil, nil, s.back, s.next),
 		container.NewBorder(nil, nil, s.cacheClear, s.cacheLabel),
 		container.NewBorder(nil, nil, widget.NewButton(s.t("Restore an interrupted update…"), s.recover), widget.NewLabel("GPLv3 · "+Version)))
@@ -918,7 +918,7 @@ func (s *screen) write(p *flash.Plan) {
 			} else {
 				details.SetText(s.t("Your card has been written and verified. Apps, settings, saves, and games were preserved.") + "\n" + s.t("Recovery backups") + ": " + result.Backup)
 			}
-			s.offerHotfixes(drive, s.im.BuildIdentity)
+			s.offerKernelUpdate(drive, s.im.BuildIdentity, func() { s.offerHotfixes(drive, s.im.BuildIdentity) })
 		})
 	}()
 }

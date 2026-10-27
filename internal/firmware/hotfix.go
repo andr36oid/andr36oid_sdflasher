@@ -351,36 +351,9 @@ func ApplyHotfixes(ctx context.Context, disk HotfixDisk, size int64, offer *Hotf
 	// Compare full sectors to keep raw USB and OS device I/O aligned. Other
 	// partitions, the partition table, and unchanged BOOT sectors are never written.
 	emit("Writing hotfixes", "BOOT", 0, p.Size())
-	old, next := make([]byte, 1<<20), make([]byte, 1<<20)
-	for off := int64(0); off < p.Size(); {
-		n := min(int64(len(next)), p.Size()-off)
-		if _, e = disk.ReadAt(old[:n], p.Offset()+off); e != nil {
-			return results, e
-		}
-		if _, e = staged.ReadAt(next[:n], off); e != nil {
-			return results, e
-		}
-		for sector := int64(0); sector < n; {
-			if bytes.Equal(old[sector:sector+512], next[sector:sector+512]) {
-				sector += 512
-				continue
-			}
-			start := sector
-			for sector < n && !bytes.Equal(old[sector:sector+512], next[sector:sector+512]) {
-				sector += 512
-			}
-			count, err := disk.WriteAt(next[start:sector], p.Offset()+off+start)
-			if err != nil {
-				return results, err
-			}
-			if int64(count) != sector-start {
-				return results, io.ErrShortWrite
-			}
-		}
-		off += n
-		emit("Writing hotfixes", "BOOT", off, p.Size())
-	}
-	if e = disk.Sync(); e != nil {
+	if e = commitBoot(disk, staged, p.Offset(), p.Size(), func(n, total int64) {
+		emit("Writing hotfixes", "BOOT", n, total)
+	}); e != nil {
 		return results, e
 	}
 	// Read back through the raw device before reporting success.

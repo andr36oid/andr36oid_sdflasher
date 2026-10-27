@@ -93,16 +93,7 @@ func PrepareBoot(im *Image, profile string, noROMs, updating bool, custom, dir s
 		return "", errors.New("profile missing from image")
 	}
 	write := func(name string, b []byte) error {
-		f, e := fs.OpenFile(strings.TrimPrefix(name, "/"), os.O_CREATE|os.O_TRUNC|os.O_RDWR)
-		if e != nil {
-			return e
-		}
-		_, e = f.Write(b)
-		ce := f.Close()
-		if e != nil {
-			return e
-		}
-		return ce
+		return writeBootFile(fs, name, b)
 	}
 	script, e := ReadFile(fs, "/boot.ini-android", 128<<10)
 	if e != nil {

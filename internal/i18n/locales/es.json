@@ -254,5 +254,22 @@
   "Cached files: %s": "Archivos en caché: %s",
   "Keep backups": "Conservar copias de seguridad",
   "Delete everything": "Borrar todo",
-  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "Esto libera el espacio ocupado por las imágenes descargadas y descomprimidas. Además, tienes %d copias de seguridad de recuperación que aún podrías restaurar. ¿Borrarlas también?"
+  "This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?": "Esto libera el espacio ocupado por las imágenes descargadas y descomprimidas. Además, tienes %d copias de seguridad de recuperación que aún podrías restaurar. ¿Borrarlas también?",
+  "Check for kernel update": "Check for kernel update",
+  "Choose an existing andr36oid card to check its kernel.": "Choose an existing andr36oid card to check its kernel.",
+  "Kernel update %s": "Kernel update %s",
+  "The kernel files in BOOT will be updated. Apps, settings, saves, and games stay in place. Keep the card connected until verification finishes.": "The kernel files in BOOT will be updated. Apps, settings, saves, and games stay in place. Keep the card connected until verification finishes.",
+  "Checking for kernel update...": "Checking for kernel update...",
+  "Skip kernel update": "Skip kernel update",
+  "Apply kernel update": "Apply kernel update",
+  "Could not check for kernel updates.": "Could not check for kernel updates.",
+  "No kernel update is available for this card.": "No kernel update is available for this card.",
+  "A kernel update is available for this card.": "A kernel update is available for this card.",
+  "Kernel update could not finish.": "Kernel update could not finish.",
+  "Kernel update installed and verified.": "Kernel update installed and verified.",
+  "This kernel index needs a newer flasher. Update the flasher to use kernel updates.": "This kernel index needs a newer flasher. Update the flasher to use kernel updates.",
+  "This card has no complete build identity. Kernel updates need an andr36oid card with readable build information.": "This card has no complete build identity. Kernel updates need an andr36oid card with readable build information.",
+  "The card build or kernel changed. Check for kernel updates again.": "The card build or kernel changed. Check for kernel updates again.",
+  "Downloading kernel update": "Downloading kernel update",
+  "Writing and verifying kernel update": "Writing and verifying kernel update"
 }

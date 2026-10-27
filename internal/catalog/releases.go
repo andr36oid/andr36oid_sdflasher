@@ -104,18 +104,28 @@ func usable(rel []release) []Asset {
 	return out
 }
 func Download(ctx context.Context, a Asset, dir string, progress func(int64, int64)) (string, error) {
-	u, e := url.Parse(a.URL)
-	if e != nil || u.Scheme != "https" || u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+Repository+"/releases/download/") {
+	return downloadRelease(ctx, a, Repository, dir, progress)
+}
+
+func validReleaseURL(raw, repository string) bool {
+	u, e := url.Parse(raw)
+	return e == nil && u.Scheme == "https" && u.Host == "github.com" && u.User == nil && u.RawQuery == "" && u.Fragment == "" && u.RawPath == "" && strings.HasPrefix(u.Path, "/"+repository+"/releases/download/")
+}
+
+func downloadRelease(ctx context.Context, a Asset, repository, dir string, progress func(int64, int64)) (string, error) {
+	if !validReleaseURL(a.URL, repository) {
 		return "", errors.New("invalid release download URL")
 	}
 	if a.Size <= 0 || a.Size > 32<<30 {
 		return "", errors.New("invalid release size")
 	}
 	digest := strings.TrimPrefix(a.Digest, "sha256:")
-	if len(digest) != 64 {
+	sum, err := hex.DecodeString(digest)
+	if err != nil || len(sum) != sha256.Size {
 		return "", errors.New("this release has no SHA-256 digest; download it manually and select the local image")
 	}
-	if e = os.MkdirAll(dir, 0700); e != nil {
+	digest = strings.ToLower(digest)
+	if e := os.MkdirAll(dir, 0700); e != nil {
 		return "", e
 	}
 	final := filepath.Join(dir, digest+"-"+filepath.Base(a.Name))
@@ -169,7 +179,9 @@ func Download(ctx context.Context, a Asset, dir string, progress func(int64, int
 	if e = f.Sync(); e != nil {
 		return "", e
 	}
-	f.Close()
+	if e = f.Close(); e != nil {
+		return "", e
+	}
 	if e = os.Rename(tmp, final); e != nil {
 		return "", e
 	}
