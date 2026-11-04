@@ -84,7 +84,7 @@ func list(all bool) ([]Drive, error) {
 		ejectable, _ := inf["Ejectable"].(bool)
 		removable, _ := inf["RemovableMediaOrExternalDevice"].(bool)
 		writable, _ := inf["Writable"].(bool)
-		whole, _ := inf["Whole"].(bool)
+		whole := wholeDisk(inf)
 		// A card in a built-in reader is Internal but ejectable/removable; only a
 		// truly fixed internal disk (the system SSD) is hidden unless ListAll asks.
 		fixed := internal && !ejectable && !removable
@@ -99,6 +99,18 @@ func list(all bool) ([]Drive, error) {
 	}
 	return out, nil
 }
+
+// wholeDisk reports whether "diskutil info -plist" describes a whole disk rather
+// than a partition. diskutil names the key "WholeDisk"; there is no "Whole" key,
+// and reading only that one skipped every disk, so no card was ever listed.
+func wholeDisk(inf map[string]any) bool {
+	if v, ok := inf["WholeDisk"].(bool); ok {
+		return v
+	}
+	v, _ := inf["Whole"].(bool)
+	return v
+}
+
 func Open(d Drive, write bool) (*Handle, error) {
 	d, e := Revalidate(d)
 	if e != nil {
