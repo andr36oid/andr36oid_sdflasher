@@ -14,9 +14,12 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -40,29 +43,91 @@ func Requested(args []string) bool {
 	return false
 }
 
-// Run executes the text-mode flasher and returns a process exit code.
+// Run executes the text-mode flasher the user asked for (-cli / A36_UI=cli)
+// and returns a process exit code.
 func Run(version string, args []string) int {
-	fs := flag.NewFlagSet("andr36oid-sdflasher -cli", flag.ContinueOnError)
+	return run(version, args, func() {
+		banner(version)
+		fmt.Println("Welcome to text mode. This is the same flasher as the graphical app, just")
+		fmt.Println("with prompts instead of buttons. It walks you through the same steps: choose")
+		fmt.Println("the image, choose the card, confirm, then write and verify.")
+		fmt.Println()
+	})
+}
+
+// RunFallback executes the text-mode flasher after the graphical interface
+// failed to start. cause is the underlying error and hint an optional extra
+// troubleshooting line (see main's softwareGLHint); both are shown after a
+// plain-language explanation, never first, so the user isn't greeted by a raw
+// panic for something that is not their fault.
+func RunFallback(version string, args []string, cause error, hint string) int {
+	return run(version, args, func() {
+		banner(version)
+		fmt.Println("The graphical window could not open. It needs graphics (OpenGL) support that")
+		fmt.Println("this PC does not have available right now. That is common on a fresh Windows")
+		fmt.Println("11, in a virtual machine, or over Remote Desktop.")
+		fmt.Println()
+		fmt.Println("No problem: we will keep going right here in text mode. It flashes your card")
+		fmt.Println("exactly the same way, with prompts instead of buttons. Just follow the steps")
+		fmt.Println("below.")
+		fmt.Println()
+		fmt.Println("Technical details, only needed for troubleshooting:")
+		if cause != nil {
+			fmt.Println("  Error:", strings.TrimSpace(cause.Error()))
+		}
+		if hint != "" {
+			fmt.Println("  Hint:", hint)
+		}
+		fmt.Printf("  Next time you can start text mode directly with:  %s -cli\n", exeName())
+		fmt.Println()
+	})
+}
+
+// errInputClosed is raised (via panic, caught in run) when stdin can't deliver
+// another line: EOF on piped/closed input, or a broken/absent console. Every
+// prompt helper would otherwise have to thread an ok flag back up to run.
+var errInputClosed = errors.New("input closed")
+
+func run(version string, args []string, intro func()) (code int) {
+	// The GUI-subsystem binary has no console; grab one before any I/O (flag
+	// errors and -h usage included) so text mode isn't a silent no-op on
+	// Windows. No-op elsewhere.
+	ownWindow := AttachConsole()
+	in := bufio.NewReader(os.Stdin)
+	if ownWindow {
+		// A console we created vanishes with the process; let the user read the
+		// last message (success or the reason for a failure) first. Deferred
+		// before the recover below so it runs after code is final.
+		defer holdConsole(in)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			if r != errInputClosed {
+				panic(r)
+			}
+			fmt.Println()
+			fmt.Fprintln(os.Stderr, "No more input could be read. Nothing was written.")
+			code = 1
+		}
+	}()
+
+	fs := flag.NewFlagSet(exeName()+" -cli", flag.ContinueOnError)
 	var (
 		imagePath = fs.String("image", "", "path to a release image (.img, .img.xz or .img.zip)")
 		all       = fs.Bool("all", false, "also list fixed disks (advanced, dangerous)")
 		modeFlag  = fs.String("mode", "", "install or update; prompted if omitted")
-		assumeYes = fs.Bool("y", false, "skip the final confirmation prompt (scripting)")
+		assumeYes = fs.Bool("y", false, "skip the final confirmation prompt (scripting; never for a fixed disk)")
 	)
 	// -cli / --cli are consumed by Requested; accept and ignore them here.
 	fs.Bool("cli", false, "run in text mode (already handled)")
 	if err := fs.Parse(stripCLIFlag(args)); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 
-	// The GUI-subsystem binary has no console; grab one before any I/O so text
-	// mode isn't a silent no-op on Windows (no-op elsewhere).
-	attachConsole()
-
-	in := bufio.NewReader(os.Stdin)
-	fmt.Printf("andr36oid SD Flasher %s - text mode\n", version)
-	fmt.Println("No graphical interface is used in this mode.")
-	fmt.Println()
+	intro()
 
 	if err := jobs.HelperAvailable(); err != nil {
 		fmt.Fprintln(os.Stderr, "Cannot start: the disk helper that writes the card is missing.")
@@ -76,6 +141,9 @@ func Run(version string, args []string) int {
 		fmt.Fprintln(os.Stderr, "Cannot create a work directory:", err)
 		return 1
 	}
+	// Same housekeeping as the graphical app at start: drop staging scratch an
+	// earlier run left behind, so the cache doesn't grow by a full image per flash.
+	firmware.CleanWorkDir(cache)
 
 	// 1. Release image.
 	path := strings.TrimSpace(*imagePath)
@@ -110,12 +178,16 @@ func Run(version string, args []string) int {
 	}
 	fmt.Println("Detected drives:")
 	for i, d := range drives {
-		fmt.Printf("  [%d] %s\n", i+1, d.Label())
+		fmt.Printf("  [%d] %s\n", i+1, driveLabel(d))
 	}
 	drive := drives[chooseIndex(in, "Choose the card to write", len(drives))]
-	fmt.Printf("Selected: %s\n\n", drive.Label())
+	fmt.Printf("Selected: %s\n\n", driveLabel(drive))
 
 	// 3. Inspect the card (privileged read; may prompt for administrator rights).
+	if runtime.GOOS == "windows" {
+		fmt.Println("Windows may ask for administrator permission, once to inspect the card and")
+		fmt.Println("once to write it. Choose Yes both times; the flasher needs it for the card.")
+	}
 	fmt.Println("Inspecting the card...")
 	res, err := jobs.Run(jobs.Request{Action: "inspect", Drive: drive}, nil)
 	if err != nil {
@@ -146,6 +218,15 @@ func Run(version string, args []string) int {
 	if mode != "install" && mode != "update" {
 		mode = chooseMode(in, card.Installed)
 	}
+	if mode == "update" && !card.Installed {
+		fmt.Println("Note: this card has no andr36oid install to update. An update keeps the")
+		fmt.Println("card's data and only replaces the system; on a blank card an install is")
+		fmt.Println("usually what you want.")
+		if !*assumeYes && !yes(in, "Continue with an update anyway? [y/N]: ", false) {
+			fmt.Println("Aborted. Nothing was written.")
+			return 1
+		}
+	}
 
 	// 6. Confirm.
 	fmt.Println()
@@ -153,14 +234,20 @@ func Run(version string, args []string) int {
 	fmt.Printf("  Image   : %s\n", im.Version)
 	fmt.Printf("  Profile : %s\n", profile)
 	fmt.Printf("  Mode    : %s\n", mode)
-	fmt.Printf("  Target  : %s\n", drive.Label())
+	fmt.Printf("  Target  : %s\n", driveLabel(drive))
 	if mode == "install" {
 		fmt.Println("  WARNING : an install ERASES EVERYTHING on this card.")
 	}
-	if !*assumeYes {
+	if drive.Fixed {
+		fmt.Println("  WARNING : this is NOT a removable card. If it is the wrong disk, everything")
+		fmt.Println("            on it (files, other operating systems, backups) is gone for good.")
+		fmt.Println("            Check the name and the size once more before you go on.")
+	}
+	// -y is for scripting a card reader; a fixed disk always asks.
+	if !*assumeYes || drive.Fixed {
 		fmt.Println()
 		fmt.Printf("Type the target path (%s) to confirm, or anything else to abort: ", drive.Path)
-		if strings.TrimSpace(readLine(in)) != drive.Path {
+		if !strings.EqualFold(strings.TrimSpace(readLine(in)), drive.Path) {
 			fmt.Println("Aborted. Nothing was written.")
 			return 1
 		}
@@ -177,6 +264,7 @@ func Run(version string, args []string) int {
 		Profile:         profile,
 	}
 	fmt.Println()
+	fmt.Println("Writing. Keep the card connected and the computer awake until this finishes.")
 	_, err = jobs.Run(req, func(p flash.Progress) { printProgress(p) })
 	fmt.Println()
 	if err != nil {
@@ -187,8 +275,44 @@ func Run(version string, args []string) int {
 		}
 		return 1
 	}
-	fmt.Println("Done. The card is ready. You can remove it.")
+	fmt.Println("Done. The card was written and verified.")
+
+	// 8. Safe removal. The GUI offers an Eject button here; mirror it.
+	if !*assumeYes && yes(in, "Eject the card now so it is safe to remove? [Y/n]: ", true) {
+		if e := platform.Eject(drive); e != nil {
+			fmt.Println("The card could not be ejected here:", e)
+			fmt.Println("Eject it with your computer's own eject before removing it.")
+		} else {
+			fmt.Println("The card is ejected. You can remove it.")
+		}
+	} else {
+		fmt.Println("Eject the card with your computer's own eject before removing it.")
+	}
+	fmt.Println("Insert it into the console's system card slot. The first boot prepares storage")
+	fmt.Println("and restarts the console; keep it powered on until Android setup appears.")
 	return 0
+}
+
+func banner(version string) {
+	title := "andr36oid SD Flasher " + version
+	fmt.Println(title)
+	fmt.Println(strings.Repeat("=", len(title)))
+	fmt.Println()
+}
+
+func exeName() string {
+	name := filepath.Base(os.Args[0])
+	return strings.TrimSuffix(name, filepath.Ext(name))
+}
+
+// holdConsole keeps a console window we created ourselves open until the user
+// dismisses it; otherwise the window closes with the process and the last
+// message is never seen. Read errors are ignored: if input is broken too,
+// there is nothing left to wait for.
+func holdConsole(in *bufio.Reader) {
+	fmt.Println()
+	fmt.Print("Press Enter to close this window.")
+	in.ReadString('\n')
 }
 
 func listDrives(all bool) ([]platform.Drive, error) {
@@ -196,6 +320,15 @@ func listDrives(all bool) ([]platform.Drive, error) {
 		return platform.ListAll()
 	}
 	return platform.List()
+}
+
+// driveLabel is a drive as the list shows it: a fixed disk (only listed with
+// -all) is marked, as in the graphical app, so it can't be mistaken for a card.
+func driveLabel(d platform.Drive) string {
+	if d.Fixed {
+		return "NOT a removable card: " + d.Label()
+	}
+	return d.Label()
 }
 
 func chooseProfile(in *bufio.Reader, profiles []firmware.Profile) string {
@@ -229,19 +362,20 @@ func chooseMode(in *bufio.Reader, installed bool) string {
 	if installed {
 		def = 2
 	}
-	line := strings.TrimSpace(prompt(in, fmt.Sprintf("Choose [1-2] (default %d): ", def)))
-	switch line {
-	case "1":
-		return "install"
-	case "2":
-		return "update"
-	case "":
-		if def == 2 {
+	for {
+		line := strings.TrimSpace(prompt(in, fmt.Sprintf("Choose [1-2] (default %d): ", def)))
+		switch line {
+		case "1":
+			return "install"
+		case "2":
 			return "update"
+		case "":
+			if def == 2 {
+				return "update"
+			}
+			return "install"
 		}
-		return "install"
-	default:
-		return chooseMode(in, installed)
+		fmt.Println("Please enter 1 or 2.")
 	}
 }
 
@@ -256,6 +390,21 @@ func chooseIndex(in *bufio.Reader, label string, n int) int {
 	}
 }
 
+// yes asks a yes/no question; an empty answer gives def.
+func yes(in *bufio.Reader, msg string, def bool) bool {
+	for {
+		switch strings.ToLower(strings.TrimSpace(prompt(in, msg))) {
+		case "y", "yes":
+			return true
+		case "n", "no":
+			return false
+		case "":
+			return def
+		}
+		fmt.Println("Please answer y or n.")
+	}
+}
+
 func prompt(in *bufio.Reader, msg string) string {
 	fmt.Print(msg)
 	return readLine(in)
@@ -267,9 +416,9 @@ func readLine(in *bufio.Reader) string {
 		// Any read error with nothing usable is terminal: EOF (piped/closed
 		// input) or a broken/absent stdin (e.g. a console we couldn't attach).
 		// Treating only io.EOF as terminal let a non-EOF error spin chooseIndex
-		// at 100% CPU, since each retry re-read returns immediately.
-		fmt.Println()
-		os.Exit(1)
+		// at 100% CPU, since each retry re-read returns immediately. Unwind to
+		// run, which reports it and still holds a self-made console window open.
+		panic(errInputClosed)
 	}
 	return strings.TrimRight(line, "\r\n")
 }

@@ -75,19 +75,27 @@ type screen struct {
 	cancel                              context.CancelFunc
 }
 
-// RunSafe runs the graphical interface and returns an error instead of crashing
-// when it can't initialise. Fyne's GLFW/OpenGL driver panics when the system has
-// no usable OpenGL (common on a fresh Windows 11 with only the Microsoft Basic
-// Display adapter, in a VM, or over RDP); recovering that panic lets the launcher
-// fall back to text mode rather than the app "not starting" at all. A driver that
-// aborts the process outright instead of panicking can't be caught here — the
-// -cli flag is the guaranteed text-mode path in that case.
+// RunSafe runs the graphical interface and returns an error instead of hanging
+// or crashing when it can't initialise, so the launcher can fall back to text
+// mode rather than the app "not starting" at all.
+//
+// Two failure shapes are covered. With no display at all (GLFW itself fails)
+// Fyne panics, which the recover below turns into an error. With a display but
+// no usable OpenGL (a fresh Windows 11 with only the Microsoft Basic Display
+// adapter and no opengl32.dll beside the exe, a VM, RDP) Fyne 2.8 does not
+// panic: it logs "window creation error" and then idles forever in its event
+// loop with no window, invisibly. probeGL catches that case up front. A driver
+// that aborts the process outright can't be caught here; the -cli flag is the
+// guaranteed text-mode path then.
 func RunSafe() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%v", r)
 		}
 	}()
+	if err := probeGL(); err != nil {
+		return err
+	}
 	Run()
 	return nil
 }

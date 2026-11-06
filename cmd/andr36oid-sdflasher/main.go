@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,17 +26,15 @@ func main() {
 		return
 	}
 
-	// Try the graphical interface. If it can't initialise (most often no usable
-	// OpenGL driver), fall back to text mode so the flasher still runs instead of
-	// failing to start.
+	// Try the graphical interface. On Windows the release zip ships Mesa's
+	// software OpenGL (opengl32.dll beside the exe), so this normally works even
+	// without a GPU driver. If it still can't initialise, fall back to text mode
+	// so the flasher runs instead of failing to start. The text mode explains
+	// why it is being used (and attaches a console first, so the explanation is
+	// actually visible from a windowsgui binary; nothing may be printed before
+	// cli.Run* on Windows).
 	if err := ui.RunSafe(); err != nil {
-		fmt.Fprintln(os.Stderr, "The graphical interface could not start:", err)
-		if hint := softwareGLHint(); hint != "" {
-			fmt.Fprintln(os.Stderr, hint)
-		}
-		fmt.Fprintln(os.Stderr, "Falling back to text mode. Re-run with -cli to use it directly.")
-		fmt.Fprintln(os.Stderr)
-		os.Exit(cli.Run(ui.Version, args))
+		os.Exit(cli.RunFallback(ui.Version, args, err, softwareGLHint()))
 	}
 }
 
@@ -55,7 +52,7 @@ func softwareGLHint() string {
 	}
 	dll := filepath.Join(filepath.Dir(exe), "opengl32.dll")
 	if _, err := os.Stat(dll); err != nil {
-		return "Hint: " + dll + " is missing. The release zip ships this software OpenGL renderer beside the exe; extract the whole zip and keep the files together."
+		return dll + " is missing. The release zip ships this software OpenGL renderer beside the exe so the window opens even without a graphics driver; extract the whole zip and keep the files together, then try again."
 	}
-	return ""
+	return dll + " is present but could not be used. Delete it to try your graphics driver's own OpenGL instead, or keep using text mode."
 }
