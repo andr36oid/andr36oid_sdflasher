@@ -9,7 +9,7 @@
  *   - elida,kd50t048a 5" panel, MIPI DSI, 2 data lanes, 480x854 portrait
  *     used landscape (854x480), backlight pwm1 40000 ns, 251 levels
  *   - odroidgo3-joypad amux sticks, same mux pins as the R36S base
- *     (gpio3 PB3/PB0/PB5, saradc ch1), sticks need +invert-absrx
+ *     (gpio3 PB3/PB0/PB5, saradc ch1), right stick via amux-channel-mapping
  *   - volume keys gpio2 PA0/PA1 (as in the base dtsi)
  *   - RK817 PMIC, 4000 mAh battery, charge LED gpio0 PB5, no vibrator,
  *     no gpio status LED beyond the base heartbeat
@@ -83,10 +83,14 @@
 	/* no Fn button on this console; Android offers a stand-in */
 	andr36oid,missing-buttons = "fn";
 	/* explicit amux channel assignments as in the go3 DTB */
-	abs_ry_channel = <1>;
-	abs_rx_channel = <0>;
-	abs_y_channel = <2>;
-	abs_x_channel = <3>;
+	/* this board's mux wiring differs from the R36S on the right stick:
+	 * mux ch0 = right stick X, ch1 = right stick Y (the R36S has them the
+	 * other way around). The odroidgo3 driver reads the axis list in the
+	 * order RY,RX,Y,X -> amux-channel-mapping sends ABS_RY to ch1,
+	 * ABS_RX to ch0. ch1 raw reads +Y with reversed polarity relative to
+	 * what games expect: invert-absrx yes, invert-absry no, verified
+	 * verified on hardware. */
+	amux-channel-mapping = <1 0 2 3>;
 
 	/*
 	 * Button map: the go3 (ODROID-GO Super) layout, ported verbatim from
