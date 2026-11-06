@@ -16,7 +16,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -55,6 +54,10 @@ func Run(version string, args []string) int {
 	if err := fs.Parse(stripCLIFlag(args)); err != nil {
 		return 2
 	}
+
+	// The GUI-subsystem binary has no console; grab one before any I/O so text
+	// mode isn't a silent no-op on Windows (no-op elsewhere).
+	attachConsole()
 
 	in := bufio.NewReader(os.Stdin)
 	fmt.Printf("andr36oid SD Flasher %s - text mode\n", version)
@@ -260,7 +263,11 @@ func prompt(in *bufio.Reader, msg string) string {
 
 func readLine(in *bufio.Reader) string {
 	line, err := in.ReadString('\n')
-	if err != nil && line == "" && err == io.EOF {
+	if err != nil && strings.TrimRight(line, "\r\n") == "" {
+		// Any read error with nothing usable is terminal: EOF (piped/closed
+		// input) or a broken/absent stdin (e.g. a console we couldn't attach).
+		// Treating only io.EOF as terminal let a non-EOF error spin chooseIndex
+		// at 100% CPU, since each retry re-read returns immediately.
 		fmt.Println()
 		os.Exit(1)
 	}
