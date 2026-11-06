@@ -113,6 +113,7 @@ func Run() {
 	s := &screen{win: w, locale: preferredLocale(a)}
 	s.localizeDialogs()
 	w.Resize(fyne.NewSize(820, 760))
+	w.CenterOnScreen()
 	w.SetCloseIntercept(func() {
 		if s.busy {
 			s.info(s.t("Operation in progress"), s.t("Wait for the operation to finish before closing. Keep the card connected."), w)
@@ -300,8 +301,12 @@ func (s *screen) build() {
 	s.language = widget.NewButton(s.languageName(), s.chooseLanguage)
 	s.updateBanner = container.NewVBox()
 	s.renderAppUpdate()
+	// Title row with the same one-line purpose the Android app shows, so both
+	// surfaces open on the same words; then the step bar.
 	header := container.NewVBox(
-		container.NewBorder(nil, nil, nil, s.language, widget.NewLabelWithStyle("andr36oid SD Flasher", 0, fyne.TextStyle{Bold: true})),
+		container.NewBorder(nil, nil, nil, container.NewVBox(s.language), container.NewVBox(
+			widget.NewLabelWithStyle("andr36oid SD Flasher", 0, fyne.TextStyle{Bold: true}),
+			wrapped(s.t("Set up or update your andr36oid card")))),
 		s.updateBanner,
 		container.NewGridWithColumns(stepCount, bar...),
 		widget.NewSeparator())
@@ -311,12 +316,21 @@ func (s *screen) build() {
 	}
 	s.cacheLabel = widget.NewLabel("")
 	s.cacheClear = widget.NewButton(s.t("Clear cached files"), s.clearCache)
+	// Footer hierarchy: Back/Next sit right under the page, as the one thing to
+	// do next; the occasional tools (hotfixes, kernel update, restore, cache)
+	// are quiet low-importance buttons in two compact rows below a separator.
+	hotfix := widget.NewButton(s.t("Apply hotfixes"), s.chooseHotfixCard)
+	kernel := widget.NewButton(s.t("Check for kernel update"), s.chooseKernelCard)
+	restore := widget.NewButton(s.t("Restore an interrupted update…"), s.recover)
+	for _, b := range []*widget.Button{hotfix, kernel, restore, s.cacheClear} {
+		b.Importance = widget.LowImportance
+	}
 	footer := container.NewVBox(
 		widget.NewSeparator(),
-		container.NewGridWithColumns(2, widget.NewButton(s.t("Apply hotfixes"), s.chooseHotfixCard), widget.NewButton(s.t("Check for kernel update"), s.chooseKernelCard)),
 		container.NewBorder(nil, nil, s.back, s.next),
-		container.NewBorder(nil, nil, s.cacheClear, s.cacheLabel),
-		container.NewBorder(nil, nil, widget.NewButton(s.t("Restore an interrupted update…"), s.recover), widget.NewLabel("GPLv3 · "+Version)))
+		widget.NewSeparator(),
+		container.NewGridWithColumns(3, hotfix, kernel, restore),
+		container.NewBorder(nil, nil, s.cacheClear, widget.NewLabel("GPLv3 · "+Version), s.cacheLabel))
 	s.showCacheUsage(cacheTotal())
 	s.home = container.NewPadded(container.NewBorder(header, footer, nil, nil, container.NewVScroll(container.NewStack(pages...))))
 	s.win.SetContent(s.home)

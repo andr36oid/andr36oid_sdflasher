@@ -146,6 +146,7 @@ func run(version string, args []string, intro func()) (code int) {
 	firmware.CleanWorkDir(cache)
 
 	// 1. Release image.
+	section(1, "Release")
 	path := strings.TrimSpace(*imagePath)
 	if path == "" {
 		path = prompt(in, "Path to the release image (.img, .img.xz or .img.zip): ")
@@ -166,6 +167,7 @@ func run(version string, args []string, intro func()) (code int) {
 	fmt.Printf("Image: %s  (%s)\n\n", im.Version, humanSize(im.Size))
 
 	// 2. Target drive.
+	section(2, "Card")
 	drives, err := listDrives(*all)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Could not list drives:", err)
@@ -207,6 +209,7 @@ func run(version string, args []string, intro func()) (code int) {
 	fmt.Println()
 
 	// 4. Device profile.
+	section(3, "Console")
 	profile := chooseProfile(in, im.Profiles)
 	if profile == "" {
 		fmt.Fprintln(os.Stderr, "No device profile chosen.")
@@ -214,6 +217,7 @@ func run(version string, args []string, intro func()) (code int) {
 	}
 
 	// 5. Mode.
+	section(4, "Options")
 	mode := strings.ToLower(strings.TrimSpace(*modeFlag))
 	if mode != "install" && mode != "update" {
 		mode = chooseMode(in, card.Installed)
@@ -229,7 +233,7 @@ func run(version string, args []string, intro func()) (code int) {
 	}
 
 	// 6. Confirm.
-	fmt.Println()
+	section(5, "Check and write")
 	fmt.Println("About to write:")
 	fmt.Printf("  Image   : %s\n", im.Version)
 	fmt.Printf("  Profile : %s\n", profile)
@@ -298,6 +302,15 @@ func banner(version string) {
 	fmt.Println(title)
 	fmt.Println(strings.Repeat("=", len(title)))
 	fmt.Println()
+}
+
+// section prints a step header, the same five steps the graphical app and the
+// Android app show in their step bar, so all three surfaces read alike.
+func section(n int, name string) {
+	fmt.Println()
+	title := fmt.Sprintf("Step %d of 5: %s", n, name)
+	fmt.Println(title)
+	fmt.Println(strings.Repeat("-", len(title)))
 }
 
 func exeName() string {

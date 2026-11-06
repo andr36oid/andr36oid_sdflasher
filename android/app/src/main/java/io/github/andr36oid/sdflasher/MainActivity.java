@@ -21,6 +21,8 @@ public final class MainActivity extends Activity {
   private LinearLayout body, target;
   // setup steps: image, card, console, options, write
   private static final String[] STEPS = {"Release", "Card", "Console", "Options", "Write"};
+  // the one warning colour, for erase texts and the erase button
+  private static final int DANGER = android.graphics.Color.rgb(0xE5, 0x39, 0x35);
   private final LinearLayout[] sections = new LinearLayout[STEPS.length];
   private TextView stepLabel, modeHelp, summary, help;
   private Button back, next;
@@ -164,7 +166,8 @@ public final class MainActivity extends Activity {
     view.setTextSize(heading ? 19 : 15);
     view.setTextColor(getColor(R.color.body_text));
     if (heading) view.setTypeface(null, android.graphics.Typeface.BOLD);
-    view.setPadding(0, dp(9), 0, dp(9));
+    // headings get air above them so sections read as groups
+    view.setPadding(0, dp(heading ? 16 : 9), 0, dp(heading ? 6 : 9));
     target.addView(view);
     return view;
   }
@@ -177,6 +180,19 @@ public final class MainActivity extends Activity {
     target.addView(view);
     controls.add(view);
     return view;
+  }
+
+  /** A filled button in the given colour: the one action to take next (or the dangerous one). */
+  private void emphasize(Button view, int color) {
+    view.setBackgroundTintList(android.content.res.ColorStateList.valueOf(color));
+    view.setTextColor(getColor(R.color.notice_text));
+  }
+
+  /** A borderless button for the occasional tools, so they stay out of the main flow. */
+  private void quiet(Button view) {
+    view.setBackgroundTintList(
+        android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT));
+    view.setTextColor(getColor(R.color.accent));
   }
 
   private void createPage() {
@@ -479,21 +495,23 @@ public final class MainActivity extends Activity {
     target = nav;
     back = button("Back", v -> showStep(WorkState.step - 1));
     next = button("Next", v -> showStep(WorkState.step + 1));
+    emphasize(next, getColor(R.color.accent));
     back.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
     next.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
     target = body;
-    button("Restore an interrupted update…", v -> recover());
-    button(
-        "Apply hotfixes",
-        v -> {
-          if (WorkState.selected == null) {
-            WorkState.choosingHotfixCard = true;
-            readers();
-            return;
-          }
-          fetchHotfixes(WorkState.selected, "");
-        });
-    button("About and licenses", v -> about());
+    quiet(button("Restore an interrupted update…", v -> recover()));
+    quiet(
+        button(
+            "Apply hotfixes",
+            v -> {
+              if (WorkState.selected == null) {
+                WorkState.choosingHotfixCard = true;
+                readers();
+                return;
+              }
+              fetchHotfixes(WorkState.selected, "");
+            }));
+    quiet(button("About and licenses", v -> about()));
     label(BuildConfig.VERSION_NAME + " · GPLv3", false);
     rendered = -1;
     render();
@@ -572,7 +590,11 @@ public final class MainActivity extends Activity {
     if (WorkState.result.isEmpty()) lastResult = "";
     // "Update" gets its own state below: switching it on here and off there on every
     // refresh replayed the radio buttons' animation, as if they kept being tapped
-    for (View view : controls) if (view != update) view.setEnabled(!busy);
+    for (View view : controls) {
+      if (view != update) view.setEnabled(!busy);
+      // tinted and borderless buttons lose the platform's disabled look; dim them
+      view.setAlpha(view.isEnabled() ? 1f : 0.45f);
+    }
     imageLabel.setText(
         WorkState.image == null
             ? t("Choose a release to see its supported consoles and panels.")
@@ -616,6 +638,10 @@ public final class MainActivity extends Activity {
     boolean ready = true;
     for (int n = 0; n < 4; n++) ready &= stepDone(n);
     action.setEnabled(!busy && ready && !(!WorkState.update && tooSmall()));
+    // red for an erase, the accent for an update: the same emphasis the desktop app uses
+    emphasize(action, WorkState.update ? getColor(R.color.accent) : DANGER);
+    action.setAlpha(action.isEnabled() ? 1f : 0.45f);
+    next.setAlpha(next.isEnabled() ? 1f : 0.45f);
     // a step that lost what it needs (card removed, new image) sends the user back
     while (WorkState.step > 0 && !reachable(WorkState.step)) WorkState.step--;
     int step = WorkState.step;
@@ -625,7 +651,7 @@ public final class MainActivity extends Activity {
     back.setEnabled(!busy && step > 0);
     next.setVisibility(step == STEPS.length - 1 ? View.INVISIBLE : View.VISIBLE);
     next.setEnabled(!busy && stepDone(step));
-    int danger = android.graphics.Color.rgb(0xE5, 0x39, 0x35);
+    int danger = DANGER;
     modeHelp.setText(
         WorkState.update
             ? t("Apps, settings, saves, and games will be preserved.")

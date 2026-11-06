@@ -48,7 +48,7 @@ func (s *screen) showCardAdvice() {
 	})
 	agree.Importance = widget.HighImportance
 	s.win.SetContent(container.NewPadded(container.NewBorder(
-		container.NewBorder(nil, nil, nil, s.language, widget.NewLabel("andr36oid SD Flasher")),
+		container.NewBorder(nil, nil, nil, s.language, widget.NewLabelWithStyle("andr36oid SD Flasher", 0, fyne.TextStyle{Bold: true})),
 		container.NewVBox(agree, widget.NewButton(s.t("Quit"), s.win.Close)), nil, nil, container.NewVScroll(body))))
 }
 
