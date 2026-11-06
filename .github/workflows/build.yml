@@ -55,7 +55,7 @@ jobs:
           msystem: ${{ matrix.msystem }}
           update: true
           path-type: inherit
-          install: ${{ matrix.compiler }} python zip
+          install: ${{ matrix.compiler }} python zip p7zip
       - name: Build Unix
         if: matrix.target != 'windows'
         shell: bash
@@ -69,8 +69,10 @@ jobs:
           CC: ${{ matrix.cc }}
         run: |
           bash scripts/build.sh
-          cd build
-          zip -r "../dist/andr36oid-sdflasher-${VERSION}-windows-${{ matrix.arch }}-portable.zip" andr36oid-sdflasher.exe andr36oid-sdflasher-helper.exe licenses
+          # opengl32.dll is Mesa llvmpipe (third_party/mesa): software OpenGL so the GUI
+          # starts without a GPU driver. It must sit beside the exe.
+          (cd build && zip -r "../dist/andr36oid-sdflasher-${VERSION}-windows-${{ matrix.arch }}-portable.zip" andr36oid-sdflasher.exe andr36oid-sdflasher-helper.exe opengl32.dll licenses)
+          python3 -I scripts/check-portable-zip.py "dist/andr36oid-sdflasher-${VERSION}-windows-${{ matrix.arch }}-portable.zip" ${{ matrix.arch }}
       - name: Linux packages
         if: matrix.target == 'linux'
         run: bash scripts/package-linux.sh

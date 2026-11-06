@@ -20,5 +20,8 @@ if [ "$(go env GOOS)" = windows ]; then flags="$flags -H=windowsgui -extldflags=
 CGO_ENABLED=1 go build -trimpath -ldflags "$flags" -o "build/andr36oid-sdflasher$ext" ./cmd/andr36oid-sdflasher
 if [ "$ext" = .exe ]; then
   python3 scripts/check-icons.py windows build/andr36oid-sdflasher.exe build/andr36oid-sdflasher-helper.exe
+  # Software OpenGL (Mesa llvmpipe) beside the exe so the GUI starts on machines
+  # without an OpenGL driver (fresh Windows 11, VMs, RDP). See third_party/mesa.
+  python3 -I scripts/fetch-mesa.py --arch "$arch" --out build
 fi
 python3 scripts/licenses.py

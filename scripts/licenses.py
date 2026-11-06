@@ -24,3 +24,10 @@ for directory in ['internal/ui/flags', 'internal/ui/fonts']:
     for p in pathlib.Path(directory).iterdir():
         if p.name in ['LICENSE', 'NOTICE'] or p.name.endswith('-OFL.txt'):
             shutil.copyfile(p, out / (p.parent.name + '-' + p.name))
+
+# Windows builds ship Mesa's llvmpipe opengl32.dll (third-party, MIT + LLVM
+# Apache-2.0 with LLVM Exceptions) beside the exe; keep its notices with it.
+if subprocess.check_output(['go', 'env', 'GOOS'], text=True).strip() == 'windows':
+    mesa = pathlib.Path('third_party/mesa')
+    for name in json.loads((mesa / 'manifest.json').read_text(encoding='utf-8'))['license_files']:
+        shutil.copyfile(mesa / name, out / name)
