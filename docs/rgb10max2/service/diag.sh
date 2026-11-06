@@ -1,9 +1,11 @@
 #!/system/bin/sh
-# RGB10 Max 2 production v26 - stock topology
+# RGB10 Max 2 production v27 - stock topology + latch + panel cycle
 #  - otg-port disabled (stock): the charger driver never learns about OTG, so
 #    charging and Wi-Fi work together, exactly like the stock firmware
 #  - boot service arms the PMIC OTG rail latch (raw i2c) and keeps it armed
 #  - watchdog re-arms the latch whenever the hub loses power
+#  - panel fix: sleep/wake cycle after bootanim stops (SF/HWC never enables
+#    the CRTC for the Android framebuffer; the cycle triggers the modeset)
 #  - radio tuning (power save off, regdomain), adb over tcp, root daemon
 D=/data/local/tmp
 mkdir -p $D
@@ -64,6 +66,29 @@ setprop service.adb.tcp.port 5555
 setprop ctl.restart adbd
 echo "ADBTCP-ON" >> $D/diag-status.txt
 chmod 666 $D/diag-status.txt $D/rail.log $D/*.err 2>/dev/null
+
+# ---- PANEL FIX: force the display DPMS cycle ----
+# The kernel draws the boot logo, but when SurfaceFlinger/HWC take over the
+# DRM master the CRTC is never (re)enabled for the Android framebuffer, so
+# the panel stays black while Android believes the screen is on. A
+# sleep/wake cycle forces DisplayPowerController to disable+re-enable the
+# display, which triggers the CRTC modeset and the picture appears.
+# This replicates exactly what the user had to do by hand (power button).
+# NOTE: input injection needs system_server, and this code runs only after
+# sys.boot_completed=1. The bootanim wait accepts "stopped" AND empty
+# (nobootanimation builds never set the service running).
+M=0
+while [ "$(getprop init.svc.bootanim)" = "running" ] && [ $M -lt 120 ]; do
+    sleep 1; M=$((M+1))
+done
+echo "bootanim state reached after ${M}s, cycling panel" >> $D/diag-status.txt
+input keyevent KEYCODE_POWER
+sleep 1.5
+input keyevent KEYCODE_POWER
+sleep 1
+echo "panel cycle done $(date +%H:%M:%S)" >> $D/diag-status.txt
+chmod 666 $D/diag-status.txt 2>/dev/null
+
 
 # ---- MAIN LOOP: root daemon + rail watchdog ----
 I=0

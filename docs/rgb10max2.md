@@ -133,9 +133,33 @@ writes rk817 registers over `/dev/i2c-0` (address 0x20).
 `docs/rgb10max2/tools/wifitool.c` is a static aarch64 nl80211 helper (no libnl)
 for power save and the regulatory domain, because the image ships no `iw`.
 
+## the boot black screen, and the service fix
+
+the kernel draws the boot logo, but when surfaceflinger/hwc take over the drm
+master the crtc is never enabled for the android framebuffer: the panel stays
+black while android keeps believing the screen is on (the display manager logs
+no state change for the whole boot). a screencap shows the launcher fully
+composed, so only the panel scanout is dead. the first vop modeset happens only
+when a sleep/wake cycle forces displaypowercontroller to disable and re-enable
+the display.
+
+the service therefore runs that cycle automatically right after
+`sys.boot_completed`: two `input keyevent KEYCODE_POWER` events 1.5 s apart.
+verified on hardware: the wake fires (`WAKE_REASON_POWER_BUTTON`), the display
+manager logs "built-in screen, on", and the launcher appears with no button
+press. `fb0/blank` does not drive dpms on this kernel and the drm sysfs `dpms`
+node is read-only, so the key-event cycle is the only working trigger from
+userspace.
+
+also set `debug.sf.nobootanimation=1` in `/vendor/build.prop` (the image ships
+`0`; `/system` is erofs and not writable): the animation renders into the dead
+panel anyway, and disabling it shortens boot by roughly 10 s
+(enable_screen 52->48 s, boot-animation-done 63->51 s on measured boots).
+
 ## what works
 
 - display, orientation, touch-less ui, all buttons and both sticks
+- **screen comes up by itself after boot** (auto sleep/wake cycle; no button)
 - wifi from battery on every cold boot (latch written by the boot service),
   wpa2-psk networks including mixed wpa/wpa2 tkip ones
 - bluetooth (the same combo module exposes hci0)
