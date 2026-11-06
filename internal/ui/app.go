@@ -75,6 +75,23 @@ type screen struct {
 	cancel                              context.CancelFunc
 }
 
+// RunSafe runs the graphical interface and returns an error instead of crashing
+// when it can't initialise. Fyne's GLFW/OpenGL driver panics when the system has
+// no usable OpenGL (common on a fresh Windows 11 with only the Microsoft Basic
+// Display adapter, in a VM, or over RDP); recovering that panic lets the launcher
+// fall back to text mode rather than the app "not starting" at all. A driver that
+// aborts the process outright instead of panicking can't be caught here — the
+// -cli flag is the guaranteed text-mode path in that case.
+func RunSafe() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%v", r)
+		}
+	}()
+	Run()
+	return nil
+}
+
 func Run() {
 	// Drop any staging scratch left behind by an earlier run before showing the
 	// window, so the cache doesn't keep growing by a full image every flash.
