@@ -353,15 +353,21 @@
  * Wi-Fi works standalone.
  */
 &u2phy_otg {
-	vbus-supply = <&otg_switch>;
-	/delete-property/ rockchip,no-vbus-en-extcon;
+	status = "disabled";
 };
 
 &usb20_otg {
-	/* dual-role: boots as host (dtsi default-otg-mode), Android's init
-	 * already configures the adb gadget (init.usb.configfs.rc) and the
-	 * phy's otg_mode attribute switches roles — enables cable ADB. */
-	dr_mode = "otg";
+	/* Stock topology: phyless dwc2, otg-port disabled. The phy lookup
+	 * defers until the u2phy driver is up (UTMI clock on) and then returns
+	 * -ENODEV for the disabled port, so dwc2 probes phyless with the clock
+	 * running (removing the phys property entirely caused an early probe
+	 * and a core-reset hang). Keeping the port disabled also keeps the
+	 * charger driver ignorant of OTG: no extcon events -> otg_in stays 0 ->
+	 * the charger keeps its plug detection and can charge while Wi-Fi runs.
+	 * The Wi-Fi rail is armed separately by the boot service (raw i2c). */
+	dr_mode = "host";
+	phys = <&u2phy_otg>;
+	phy-names = "usb2-phy";
 };
 
 /*
@@ -377,19 +383,12 @@
 };
 
 /*
- * RGB10 Max 2: the R36S base dtsi wires the charger's DC detect to
- * gpio0 PB3 ("P.C.B rev0.2 DC Detect"). This board has no DC jack and
- * the pin floats high, so the charger reports mains online and Android
- * shows "charging" with no cable. Remove the detection entirely; USB-C
- * power (the real charge path) is unaffected.
+ * RGB10 Max 2: the charger detection (gpio0 PB3, base tree values) stays
+ * untouched, like stock: it is what lets the charger enable the charge
+ * path. The Wi-Fi rail is armed by the boot service; because the phy port
+ * is disabled, the charger never receives a false OTG event and keeps
+ * working normally alongside Wi-Fi.
  */
-&rk817 {
-	charger {
-		/delete-property/ dc_det_gpio;
-	};
-};
-
-/* One card slot only; Wi-Fi is the internal USB RTL8723BU */
 &sdio {
 	status = "disabled";
 };

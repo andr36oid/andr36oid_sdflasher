@@ -68,13 +68,12 @@ moment during boot.
 - `invert-absrx` on the joypad and the amux channels made explicit
 - leds: no vibrator, charge led on gpio0 pb5
 - battery: design capacity 4000, charger values from the go3 tree
-- `&rk817 { charger { /delete-property/ dc_det_gpio; }; }` - the base tree wires
-  the rk817 charger's dc detect to gpio0 pb3 for the r36s pcb. this board has no
-  dc jack and the pin floats high, so android shows "charging" with no cable.
-  removing the property fixes the indicator; usb-c charging is unaffected
-- the dwc2 otg controller stays in `dr_mode = "otg"` and the phy port stays
-  enabled, so the otg connector keeps working as a normal usb-c data port
-  (host devices, and android's usb modes)
+- the charger's dc detect (gpio0 pb3) stays exactly as in the base tree. it is
+  what lets the charger enable the charge path, and stock leaves it alone
+- the dwc2 otg controller runs `dr_mode = "host"` with the phy port **disabled**
+  (see the wifi section for why). the otg connector still works as a plain
+  usb-c host port for devices; android's usb *device* modes need the phy port
+  enabled and are outside this configuration
 
 build it exactly like the other andr36oid device trees:
 
@@ -86,31 +85,38 @@ dtc -@ -I dts -O dtb -o rk3326-r36s-android.dtb out.dts
 
 the `-undef` matters: the kernel's `linux` builtin macro mangles `linux,code`.
 
-## wifi power, the part that no device tree can do
+## wifi power: the rk817 latch, and why the phy port stays disabled
 
-the internal hub and the wifi dongle are on the dwc2 bus. on this board their 5 v
-comes from the otg port's vbus net, and the rk817 pmic's otg rail is what is
-supposed to feed that net when the port is in host mode. two things make this
-awkward:
+the internal hub and the wifi dongle sit on the dwc2 bus, and their 5 v is the
+otg port's vbus net, fed by the rk817 otg rail. on this board the rail behaves
+as a pmic-side latch: kernel writes to the otg enable register (charger,
+regulator, phy vbus supply) never reach it - the kernel register cache reads
+back "on" (`reg_b4=47 otg5v=1`) while the hardware register reads `0x07` and no
+power appears. a raw i2c write of `0xB4 = 0x47` from linux flips it, the hub
+powers from the battery and the wifi module comes up. the latch survives warm
+reboots but resets on a cold power-off, so the boot service writes it on every
+cold boot.
 
-1. the charger driver disables the otg rail during probe, and the phy event that
-   would re-enable it is suppressed by the base device tree
-   (`rockchip,no-vbus-en-extcon`)
-2. more importantly, the rk817's rail on this board behaves as a pmic-side latch.
-   kernel writes to the otg enable register (charger, regulator, phy vbus
-   supply) never reach it: the kernel's register cache reads back "on"
-   (`reg_b4=47 otg5v=1`) while the hardware register still reads `0x07`, and no
-   power appears on the net. writing the register from u-boot does not survive
-   either
+the stock firmware ships the same topology: dwc2 runs phyless with the otg **phy
+port disabled**. that one detail is load-bearing twice:
 
-what does work: a raw i2c write of `0xB4 = 0x47` from linux, once the charger
-driver is not fighting it, flips the latch. the hub then enumerates from battery
-power and the wifi module comes up. the latch survives warm reboots but resets on
-a cold power-off, so it has to be set on every cold boot. writing it while
-external 5 v is already on the otg net can trip the pmic, so the write must only
-happen when the hub is not already powered.
+- dwc2: keeping `phys = <&u2phy_otg>` while the port is disabled makes the phy
+  lookup defer until the u2phy driver is up (utmi clock on) and then return
+  -ENODEV, so dwc2 probes phyless with the clock running. removing the `phys`
+  property outright instead makes dwc2 probe before that clock exists and its
+  core soft reset hangs with "GRSTCTL_CSFTRST timeout"
+- charger: if the phy port is enabled it fires EXTCON_USB_VBUS_EN, the charger
+  sets `otg_in` and then **disables its own plug/plug-out interrupts**. a
+  charger plugged in afterwards is never detected and charging stops until
+  reboot. with the phy port disabled the charger never hears about otg, keeps
+  its plug detection, and charges normally
 
-`docs/rgb10max2/service/` does exactly that at boot, in this order:
+result, verified on hardware: charging and wifi run together. with a charger in
+the power port its 5 v feeds the shared net, so the hub enumerates before the
+latch is even needed; on battery the boot service arms the latch. a 30 s
+watchdog re-arms the latch whenever the hub drops.
+
+`docs/rgb10max2/service/` does this at boot, in this order:
 
 1. preload `rtl8xxxu.ko` so the dongle binds the moment it enumerates
 2. pin runtime pm on the usb controllers
@@ -130,11 +136,13 @@ for power save and the regulatory domain, because the image ships no `iw`.
 ## what works
 
 - display, orientation, touch-less ui, all buttons and both sticks
-- wifi from battery on every cold boot (after the latch write), wpa2-psk
-  networks including mixed wpa/wpa2 tkip ones
+- wifi from battery on every cold boot (latch written by the boot service),
+  wpa2-psk networks including mixed wpa/wpa2 tkip ones
 - bluetooth (the same combo module exposes hci0)
-- the otg port as a normal usb-c data port; the power port charges
-- battery percentage and an honest charging state
+- **charging and wifi at the same time** - stock parity (verified live:
+  battery charging at +869 mA with wlan0 connected)
+- the otg port as a plain usb-c host port; the power port charges
+- battery percentage
 
 ## known limits
 
