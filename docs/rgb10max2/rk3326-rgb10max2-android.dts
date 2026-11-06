@@ -165,13 +165,13 @@
 	};
 	sw11 {
 		gpios = <&gpio2 RK_PA4 GPIO_ACTIVE_LOW>;
-		label = "GPIO F5";
-		linux,code = <0x2c4>; /* BTN_TRIGGER_HAPPY5 */
+		label = "GPIO L3";
+		linux,code = <0x13d>; /* BTN_THUMBL (left stick push) */
 	};
 	sw12 {
 		gpios = <&gpio2 RK_PA5 GPIO_ACTIVE_LOW>;
-		label = "GPIO F6";
-		linux,code = <0x2c5>; /* BTN_TRIGGER_HAPPY6 */
+		label = "GPIO R3";
+		linux,code = <0x13e>; /* BTN_THUMBR (right stick push) */
 	};
 	sw13 {
 		gpios = <&gpio2 RK_PA6 GPIO_ACTIVE_LOW>;
