@@ -28,13 +28,23 @@ for P in /sys/devices/platform/ff300000.usb /sys/bus/usb/devices/usb1 /sys/bus/u
     [ -e "$P/power/control" ] && echo on > "$P/power/control" 2>>$D/pm.err
 done
 
-# ---- runtime memory/perf tuning (kernel sysctls reset at boot; re-apply) ----
-# fallbacks: swappiness 60, read_ahead_kb 128, iostats 1, gpu max 520000000,
-# animation scales 1.0 -- every echo below is individually reversible.
+# runtime tuning (kernel sysctls reset at boot; re-apply) ----
 echo 100 > /proc/sys/vm/swappiness 2>/dev/null
+echo 512 > /sys/block/mmcblk0p6/queue/read_ahead_kb 2>/dev/null
 echo 512 > /sys/block/mmcblk0/queue/read_ahead_kb 2>/dev/null
 echo 0 > /sys/block/mmcblk0/queue/iostats 2>/dev/null
 echo 600000000 > /sys/class/devfreq/ff400000.gpu/max_freq 2>/dev/null && echo "gpu: max 600MHz" >> $D/diag-status.txt
+
+# ---- tailscale (remote access: console joins the tailnet) ----
+# state already authenticated in /data/local/tmp/ts/state; tailscaled alone
+# reconnects on boot. Janitor restarts it if it ever dies.
+TSB=/data/local/tmp/ts
+if [ -x $TSB/tailscaled ] && [ -f $TSB/state/tailscaled.state ]; then
+    if ! pidof tailscaled >/dev/null; then
+        nohup $TSB/tailscaled --statedir=$TSB/state --socket=$TSB/tailscaled.sock --tun=tun0 > $TSB/tsd.log 2>&1 &
+        echo "tailscale: started" >> $D/diag-status.txt
+    fi
+fi
 
 # ---- arm the Wi-Fi rail latch (always; charging is independent now) ----
 if [ -x "$RK" ]; then
@@ -138,6 +148,11 @@ while true; do
             fi
         done
         am kill-all 2>/dev/null
+    fi
+    # ---- tailscale keep-alive ----
+    if [ -x $TSB/tailscaled ] && [ -f $TSB/state/tailscaled.state ] && ! pidof tailscaled >/dev/null; then
+        nohup $TSB/tailscaled --statedir=$TSB/state --socket=$TSB/tailscaled.sock --tun=tun0 >> $TSB/tsd.log 2>&1 &
+        echo "$(date +%H:%M:%S) tailscale restarted" >> $D/rail.log
     fi
     sleep 1
 done
