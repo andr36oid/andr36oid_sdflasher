@@ -91,6 +91,40 @@ type Session struct {
 	hotfixOffer    *firmware.HotfixOffer
 	hotfixIdentity string
 	hotfixURL      string // empty uses the published index
+	// cancel stops the write in progress; guarded by cancelMu, not mu, so the
+	// app can call Cancel while Write holds mu.
+	cancelMu sync.Mutex
+	cancel   context.CancelFunc
+}
+
+// Stopped is the message of the error Write returns when Cancel ended it. The
+// app matches on it to show "stopped" rather than a failure.
+const Stopped = "stopped by the user"
+
+// Cancel stops a Write that is running. The write returns with an error whose
+// message starts with Stopped; the card is left as it is at that moment (an
+// install must be written again from the start, an update can be restored from
+// its recovery backup). No effect when nothing is being written.
+func (s *Session) Cancel() {
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	if s.cancel != nil {
+		s.cancel()
+	}
+}
+
+// writeContext hands out the context a Write runs under and arms Cancel for it.
+func (s *Session) writeContext() (context.Context, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancelMu.Lock()
+	s.cancel = cancel
+	s.cancelMu.Unlock()
+	return ctx, func() {
+		s.cancelMu.Lock()
+		s.cancel = nil
+		s.cancelMu.Unlock()
+		cancel()
+	}
 }
 
 func NewSession(dir string) (*Session, error) {
@@ -301,7 +335,12 @@ func (s *Session) Write(d Disk, input string, observer Observer) (string, error)
 	}
 	defer os.Remove(boot)
 	backup := filepath.Join(dir, "recovery")
-	if e = flash.Execute(context.Background(), dev, s.image, p, boot, backup, func(p flash.Progress) { emit(observer, p) }); e != nil {
+	ctx, done := s.writeContext()
+	defer done()
+	if e = flash.Execute(ctx, dev, s.image, p, boot, backup, func(p flash.Progress) { emit(observer, p) }); e != nil {
+		if ctx.Err() != nil {
+			e = errors.New(Stopped)
+		}
 		return "", fmt.Errorf("%w\nRecovery: %s", e, dir)
 	}
 	return encode(rec)

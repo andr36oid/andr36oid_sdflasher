@@ -39,6 +39,10 @@ final class WorkState {
       note = "",
       result = "";
   static volatile boolean customAccepted = false, update = false, noROMs = false, busy = false;
+  // seconds the card reader has not answered a call (0: responding); from the USB watchdog
+  static volatile int stall = 0;
+  // a write is running that engine.cancel() can stop
+  static volatile boolean cancelable = false;
   // Android size for a new card in GiB, 0: the recommended size
   static volatile int userdataGiB = 0;
   // a different system image (GSI) copied into app storage, "" for andr36oid's own
@@ -110,6 +114,11 @@ final class WorkState {
       engine =
           Mobile.newSession(
               new File(context.getFilesDir(), "images-and-recovery").getAbsolutePath());
+    UsbCard.Connection.stallListener =
+        seconds -> {
+          stall = seconds;
+          revision++;
+        };
   }
 
   static synchronized void start(Context context, boolean usb, Work work) {
@@ -123,6 +132,8 @@ final class WorkState {
     plan = null;
     pending = work;
     usbJob = usb;
+    stall = 0;
+    cancelable = false;
     revision++;
     Intent intent = new Intent(context, FlashService.class);
     try {

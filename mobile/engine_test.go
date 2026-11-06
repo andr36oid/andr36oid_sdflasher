@@ -148,3 +148,24 @@ func TestRecoveryRejectsAnotherCardInSameReader(t *testing.T) {
 		t.Fatal("recovery wrote a different card")
 	}
 }
+
+func TestCancelReachesOnlyTheArmedWrite(t *testing.T) {
+	s := &Session{}
+	s.Cancel() // nothing armed: must be a no-op
+	ctx, done := s.writeContext()
+	if ctx.Err() != nil {
+		t.Fatal("fresh write context already cancelled")
+	}
+	s.Cancel()
+	if ctx.Err() == nil {
+		t.Fatal("Cancel did not stop the armed write")
+	}
+	done()
+	if s.cancel != nil {
+		t.Fatal("write context stayed armed after the write ended")
+	}
+	s.Cancel() // disarmed again: no-op
+	if !strings.HasPrefix(Stopped+"\nRecovery: /x", Stopped) {
+		t.Fatal("app matches the stopped error by prefix")
+	}
+}

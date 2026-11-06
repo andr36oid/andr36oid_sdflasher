@@ -32,8 +32,8 @@ public final class MainActivity extends Activity {
   private TextView systemLabel;
   private FrameLayout page;
   private Button updateNotice;
-  private TextView imageLabel, cardLabel, status, customLabel, mapLegend;
-  private Button language, console, profile, chooseCard, action;
+  private TextView imageLabel, cardLabel, status, customLabel, mapLegend, usbNotice;
+  private Button language, console, profile, chooseCard, action, stop;
   private final List<View> controls = new ArrayList<>();
   private CheckBox noROMs;
   private RadioButton install, update;
@@ -308,6 +308,14 @@ public final class MainActivity extends Activity {
     top.addView(language);
     target = body;
     label(t("Set up or update your andr36oid card"), false);
+    // Capability preflight: a device without USB host (OTG) can never see a card
+    // reader. Say so at once, in plain words, and point to the proven path.
+    if (!UsbCard.hostSupported(this)) {
+      usbNotice = label(t("This device cannot connect to a USB card reader"), true);
+      usbNotice.setTextColor(android.graphics.Color.rgb(0xE5, 0x39, 0x35));
+      TextView why = label(UsbCard.noReaderReason(this), false);
+      why.setAutoLinkMask(android.text.util.Linkify.WEB_URLS);
+    }
     stepLabel = label("", true);
     stepLabel.setTextColor(getColor(R.color.accent));
 
@@ -457,6 +465,14 @@ public final class MainActivity extends Activity {
     progress.setMax(1000);
     body.addView(progress);
     status = label("", false);
+    // Stop is the one control that stays live while a write runs; it is not in
+    // controls, which render() disables when busy.
+    stop = new Button(this);
+    stop.setAllCaps(false);
+    stop.setText(t("Stop writing"));
+    stop.setOnClickListener(v -> confirmStop());
+    stop.setVisibility(View.GONE);
+    body.addView(stop);
     LinearLayout nav = new LinearLayout(this);
     nav.setOrientation(LinearLayout.HORIZONTAL);
     body.addView(nav);
@@ -652,11 +668,23 @@ public final class MainActivity extends Activity {
     action.setText(t(WorkState.update ? "Update this card…" : "Erase and write this card…"));
     JSONObject p = WorkState.progress;
     String phase = p == null ? "" : p.optString("phase");
+    int stall = WorkState.stall;
     status.setText(
-        WorkState.error.isEmpty()
-            ? t(busy ? (phase.isEmpty() ? "Working…" : phase) : WorkState.message)
-                + (busy && p != null && p.has("name") ? ": " + t(p.optString("name")) : "")
-            : t("Operation could not finish") + "\n" + WorkState.error);
+        !WorkState.error.isEmpty()
+            ? stopped()
+                ? t("Writing stopped")
+                : t("Operation could not finish") + "\n" + WorkState.error
+            : busy && stall > 0
+                ? t(
+                    "The card reader has not answered for %d seconds. If this does not change,"
+                        + " unplug the reader: the operation then stops with an error and you"
+                        + " can try again, or use the Windows or Linux flasher.",
+                    stall)
+                : t(busy ? (phase.isEmpty() ? "Working…" : phase) : WorkState.message)
+                    + (busy && p != null && p.has("name") ? ": " + t(p.optString("name")) : ""));
+    status.setTextColor(
+        busy && stall > 0 ? android.graphics.Color.rgb(0xE5, 0x39, 0x35) : getColor(R.color.body_text));
+    stop.setVisibility(busy && WorkState.cancelable ? View.VISIBLE : View.GONE);
     progress.setIndeterminate(busy && (p == null || p.optLong("total") == 0));
     if (p != null && p.optLong("total") > 0)
       progress.setProgress((int) (1000.0 * p.optLong("done") / p.optLong("total")));
@@ -696,7 +724,17 @@ public final class MainActivity extends Activity {
     if (!busy && !WorkState.error.isEmpty() && !WorkState.error.equals(lastError)) {
       lastError = WorkState.error;
       WorkState.choosingHotfixCard = false;
-      showError(WorkState.error);
+      if (stopped())
+        new AlertDialog.Builder(this)
+            .setTitle(t("Writing stopped"))
+            .setMessage(
+                t(
+                    "Nothing more was written. The card is incomplete and must be written again"
+                        + " from the start before it can be used. An interrupted update can be"
+                        + " restored with \"Restore an interrupted update\"."))
+            .setPositiveButton(t("OK"), null)
+            .show();
+      else showError(WorkState.error);
     }
     if (!busy && WorkState.hotfixAfterFlash) {
       WorkState.hotfixAfterFlash = false;
@@ -724,6 +762,8 @@ public final class MainActivity extends Activity {
           .setTitle(t("Written and verified"))
           .setMessage(
               t(WorkState.message)
+                  + "\n\n"
+                  + t("It is safe to unplug the card reader now.")
                   + (WorkState.note.isEmpty() ? "" : "\n\n" + t(WorkState.note))
                   + speedText())
           .setPositiveButton(t("OK"), null)
@@ -891,10 +931,37 @@ public final class MainActivity extends Activity {
     if (result != RESULT_OK || data == null || data.getData() == null) return;
     Uri uri = data.getData();
     String name = "";
+    long size = -1;
     try (Cursor cursor =
         getContentResolver()
-            .query(uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
-      if (cursor != null && cursor.moveToFirst()) name = cursor.getString(0);
+            .query(
+                uri,
+                new String[] {OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE},
+                null,
+                null,
+                null)) {
+      if (cursor != null && cursor.moveToFirst()) {
+        name = cursor.getString(0);
+        if (!cursor.isNull(1)) size = cursor.getLong(1);
+      }
+    }
+    // The file is copied into app storage first (SAF gives a stream, not a path).
+    // A phone that is nearly full would otherwise fail halfway with a bare "No
+    // space left on device"; say it up front, with the numbers.
+    long free = getFilesDir().getUsableSpace();
+    if (size > 0 && free > 0 && size + (64L << 20) > free) {
+      new AlertDialog.Builder(this)
+          .setTitle(t("Not enough free space"))
+          .setMessage(
+              t(
+                  "This device does not have enough free storage to hold the file: %.1f GB"
+                      + " needed, %.1f GB free. Free up space, or use the Windows or Linux"
+                      + " flasher.",
+                  size / 1e9,
+                  free / 1e9))
+          .setPositiveButton(t("OK"), null)
+          .show();
+      return;
     }
     String lower = name.toLowerCase(Locale.ROOT);
     if (request == 4 && !lower.endsWith(".img")) {
@@ -1104,10 +1171,23 @@ public final class MainActivity extends Activity {
     List<UsbCard> readers = UsbCard.readers(this);
     if (readers.isEmpty()) {
       WorkState.choosingHotfixCard = false;
-      info(
-          "No removable cards found",
-          "Connect a USB SD-card adapter directly. Internal SD slots, USB hubs, hard drives, and"
-              + " SSDs are not supported.");
+      // Say which of the three things it is: no USB host, nothing plugged in, or a
+      // device that is not a mass-storage reader. Each names the desktop flasher as
+      // the proven alternative.
+      TextView text = new TextView(this);
+      text.setText(UsbCard.noReaderReason(this));
+      text.setTextSize(15);
+      text.setPadding(dp(24), dp(12), dp(24), dp(12));
+      text.setAutoLinkMask(android.text.util.Linkify.WEB_URLS);
+      new AlertDialog.Builder(this)
+          .setTitle(
+              t(
+                  UsbCard.hostSupported(this)
+                      ? "No removable cards found"
+                      : "This device cannot connect to a USB card reader"))
+          .setView(text)
+          .setPositiveButton(t("OK"), null)
+          .show();
       return;
     }
     String[] labels = new String[readers.size()];
@@ -1248,7 +1328,10 @@ public final class MainActivity extends Activity {
                   () -> {
                     try (UsbCard.Connection disk = target.open(app)) {
                       WorkState.speed = null;
+                      WorkState.cancelable = true;
+                      WorkState.revision++;
                       WorkState.result = WorkState.engine.write(disk, input, WorkState::event);
+                      WorkState.cancelable = false;
                       WorkState.message =
                           updating
                               ? "Your card has been written and verified. Apps, settings, saves,"
@@ -1556,6 +1639,28 @@ public final class MainActivity extends Activity {
                       + " games may stutter. For a smooth experience, use a card from a known"
                       + " brand marked A1 or A2.");
     return text;
+  }
+
+  /** The last error is the engine's "stopped by the user", not a failure. */
+  private boolean stopped() {
+    return WorkState.error.startsWith(Mobile.Stopped);
+  }
+
+  private void confirmStop() {
+    if (!WorkState.busy || !WorkState.cancelable) return;
+    new AlertDialog.Builder(this)
+        .setTitle(t("Stop writing?"))
+        .setMessage(
+            t(
+                "The card will be left incomplete and must be written again from the start. An"
+                    + " interrupted update keeps its recovery backup."))
+        .setNegativeButton(t("Cancel"), null)
+        .setPositiveButton(
+            t("Stop writing"),
+            (d, w) -> {
+              if (WorkState.busy && WorkState.cancelable) WorkState.engine.cancel();
+            })
+        .show();
   }
 
   private void info(String title, String message) {

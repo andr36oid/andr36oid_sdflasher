@@ -57,9 +57,13 @@ public final class FlashService extends Service {
             () -> {
               try {
                 job.run();
-              } catch (Exception e) {
+              } catch (Throwable e) {
+                // Throwable, not Exception: a StackOverflowError or OutOfMemoryError from
+                // the USB stack must end the job with a message, not kill the app.
                 WorkState.error = e.getMessage() == null ? e.toString() : e.getMessage();
               } finally {
+                WorkState.cancelable = false;
+                WorkState.stall = 0;
                 new Handler(Looper.getMainLooper())
                     .post(
                         () -> {

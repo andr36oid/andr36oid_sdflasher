@@ -24,12 +24,12 @@ public class UsbCardTest {
 
     public void init() {}
 
-    public void read(long lba, ByteBuffer b) {
+    public void read(long lba, ByteBuffer b) throws IOException {
       offset = lba;
       while (b.hasRemaining()) b.put((byte) 0x5a);
     }
 
-    public void write(long lba, ByteBuffer b) {
+    public void write(long lba, ByteBuffer b) throws IOException {
       offset = lba;
       writes++;
       b.position(b.limit());
@@ -119,6 +119,99 @@ public class UsbCardTest {
     assertEquals(1, d.writes);
     c.close();
     assertThrows(IOException.class, () -> c.read(0, 512));
+  }
+
+  /** A reader call that takes too long is reported as a stall, then cleared when it returns. */
+  @Test
+  public void watchdogReportsStalledReaderCallsAndClearsThem() throws Exception {
+    long saved = UsbCard.Connection.stallAfterMs;
+    UsbCard.Connection.stallAfterMs = 300;
+    java.util.concurrent.CountDownLatch stalled = new java.util.concurrent.CountDownLatch(1);
+    java.util.concurrent.CountDownLatch cleared = new java.util.concurrent.CountDownLatch(1);
+    java.util.concurrent.atomic.AtomicInteger seconds = new java.util.concurrent.atomic.AtomicInteger(-1);
+    UsbCard.Connection.stallListener =
+        s -> {
+          if (s > 0) {
+            seconds.set(s);
+            stalled.countDown();
+          } else if (stalled.getCount() == 0) cleared.countDown();
+        };
+    Driver slow =
+        new Driver() {
+          @Override
+          public void read(long lba, ByteBuffer b) throws IOException {
+            try {
+              Thread.sleep(1200);
+            } catch (InterruptedException ignored) {
+            }
+            super.read(lba, b);
+          }
+        };
+    UsbCard.Connection c = new UsbCard.Connection(new Transport(), slow, 1L << 30, "test", 0);
+    try {
+      long start = System.currentTimeMillis();
+      c.read(0, 512);
+      assertTrue(System.currentTimeMillis() - start >= 1200);
+      assertTrue("stall was reported", stalled.await(0, java.util.concurrent.TimeUnit.SECONDS));
+      assertTrue(seconds.get() >= 1);
+      assertTrue(
+          "stall was cleared after the call returned",
+          cleared.await(2, java.util.concurrent.TimeUnit.SECONDS));
+      // a quick call after the stall is not reported as stalled
+      c.read(512, 512);
+    } finally {
+      c.close();
+      UsbCard.Connection.stallListener = null;
+      UsbCard.Connection.stallAfterMs = saved;
+    }
+  }
+
+  /** A call that fails after stalling gets the plain-language stall text first. */
+  @Test
+  public void stalledFailureExplainsItself() throws Exception {
+    long saved = UsbCard.Connection.stallAfterMs;
+    UsbCard.Connection.stallAfterMs = 200;
+    Driver broken =
+        new Driver() {
+          @Override
+          public void write(long lba, ByteBuffer b) throws IOException {
+            try {
+              Thread.sleep(700);
+            } catch (InterruptedException ignored) {
+            }
+            throw new IOException("MAX_RECOVERY_ATTEMPTS Exceeded");
+          }
+        };
+    UsbCard.Connection c = new UsbCard.Connection(new Transport(), broken, 1L << 30, "test", 0);
+    c.stallMessage = "stopped responding";
+    try {
+      c.write(0, new byte[512]);
+      fail("write succeeded");
+    } catch (IOException e) {
+      assertTrue(e.getMessage(), e.getMessage().startsWith("stopped responding"));
+      assertTrue(e.getMessage().contains("MAX_RECOVERY_ATTEMPTS"));
+    } finally {
+      c.close();
+      UsbCard.Connection.stallAfterMs = saved;
+    }
+    // a failure without a stall keeps its own message
+    Driver quick =
+        new Driver() {
+          @Override
+          public void write(long lba, ByteBuffer b) throws IOException {
+            throw new IOException("plain failure");
+          }
+        };
+    c = new UsbCard.Connection(new Transport(), quick, 1L << 30, "test", 0);
+    c.stallMessage = "stopped responding";
+    try {
+      c.write(0, new byte[512]);
+      fail("write succeeded");
+    } catch (IOException e) {
+      assertEquals("plain failure", e.getMessage());
+    } finally {
+      c.close();
+    }
   }
 
   @Test
