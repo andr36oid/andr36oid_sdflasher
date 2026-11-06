@@ -76,7 +76,7 @@ final class UsbCard {
     if (!hostSupported(context))
       return I18n.text(
           context,
-          "This phone or tablet does not support USB host mode (OTG), so no app on it can talk to"
+          "This device does not support USB host mode (OTG), so no app on it can talk to"
               + " a card reader. Please use the Windows or Linux flasher instead: it is the"
               + " proven way to write the card. Download it from %s",
           DESKTOP_DOWNLOAD);
@@ -85,8 +85,8 @@ final class UsbCard {
     if (devices.isEmpty())
       return I18n.text(
           context,
-          "Nothing is connected over USB. Plug the card reader straight into the phone or"
-              + " tablet, with an OTG adapter if needed. Some devices have an OTG switch in"
+          "Nothing is connected over USB. Plug the card reader straight into this"
+              + " device, with an OTG adapter if needed. Some devices have an OTG switch in"
               + " Settings that must be on. USB hubs are not supported.");
     StringBuilder names = new StringBuilder();
     for (UsbDevice d : devices) {
