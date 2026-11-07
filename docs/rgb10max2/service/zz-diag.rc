@@ -1,0 +1,9 @@
+# andr36oid-diag: internal wifi rail latch + radio tuning + adb
+# install as /vendor/etc/init/zz-diag.rc with diag.sh at /vendor/etc/diag.sh
+on post-fs-data
+    start andr36oid-diag
+
+service andr36oid-diag /system/bin/sh /vendor/etc/diag.sh
+    user root
+    group root
+    disabled
