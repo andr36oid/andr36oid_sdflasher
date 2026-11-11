@@ -2,6 +2,8 @@ package firmware
 
 import (
 	"archive/zip"
+	"bufio"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -48,8 +50,11 @@ func stage(ctx context.Context, src, dir string, progress func(int64, int64), di
 	if strings.EqualFold(filepath.Ext(src), ".xz") {
 		return stageXZ(ctx, src, dir, progress, digest)
 	}
+	if strings.EqualFold(filepath.Ext(src), ".gz") {
+		return stageGzip(ctx, src, dir, progress, digest)
+	}
 	if !strings.EqualFold(filepath.Ext(src), ".zip") {
-		return "", errors.New("choose an .img, .img.xz or .img.zip release image")
+		return "", errors.New("choose an .img, .img.xz, .img.gz or .img.zip release image")
 	}
 	z, e := zip.OpenReader(src)
 	if e != nil {
@@ -126,6 +131,86 @@ func stage(ctx context.Context, src, dir string, progress func(int64, int64), di
 	}
 	if written != int64(entry.UncompressedSize64) {
 		return "", errors.New("truncated archive")
+	}
+	ok = true
+	return name, nil
+}
+
+// counted counts what was read of the packed file, for the progress of a packing that
+// doesn't say how large the image is.
+type counted struct {
+	r io.Reader
+	n int64
+}
+
+func (c *counted) Read(b []byte) (int, error) {
+	n, e := c.r.Read(b)
+	c.n += int64(n)
+	return n, e
+}
+
+// stageGzip unpacks an .img.gz, the packing of test builds.
+func stageGzip(ctx context.Context, src, dir string, progress func(int64, int64), digest hash.Hash) (string, error) {
+	f, e := os.Open(src)
+	if e != nil {
+		return "", e
+	}
+	defer f.Close()
+	st, e := f.Stat()
+	if e != nil {
+		return "", e
+	}
+	in := &counted{r: f}
+	z, e := gzip.NewReader(bufio.NewReaderSize(in, 1<<20))
+	if e != nil {
+		return "", e
+	}
+	if e = os.MkdirAll(dir, 0700); e != nil {
+		return "", e
+	}
+	dst, e := os.CreateTemp(dir, "image-*.img")
+	if e != nil {
+		return "", e
+	}
+	name := dst.Name()
+	ok := false
+	defer func() {
+		dst.Close()
+		if !ok {
+			os.Remove(name)
+		}
+	}()
+	var out io.Writer = dst
+	if digest != nil {
+		out = io.MultiWriter(dst, digest)
+	}
+	buf := make([]byte, 4<<20)
+	var written int64
+	for {
+		if e = ctx.Err(); e != nil {
+			return "", e
+		}
+		n, re := z.Read(buf)
+		if n > 0 {
+			if written += int64(n); written > MaxImageSize {
+				return "", errors.New("expanded image exceeds limit")
+			}
+			if _, e = out.Write(buf[:n]); e != nil {
+				return "", e
+			}
+			if progress != nil {
+				progress(min(in.n, st.Size()), st.Size())
+			}
+		}
+		if re == io.EOF {
+			break
+		}
+		if re != nil {
+			return "", re
+		}
+	}
+	if e = dst.Sync(); e != nil {
+		return "", e
 	}
 	ok = true
 	return name, nil

@@ -3,10 +3,12 @@ package firmware
 import (
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,5 +166,34 @@ func TestLoadReleaseArchive(t *testing.T) {
 	forWrite, err := InspectForWrite(ctx, im.Path, selected)
 	if err != nil || forWrite.SHA256 != selected || len(forWrite.Profiles) != len(im.Profiles) {
 		t.Fatalf("write inspection did not retain the selected digest: %v", err)
+	}
+}
+
+func TestStageGzip(t *testing.T) {
+	dir := t.TempDir()
+	raw := bytes.Repeat([]byte("andr36oid image "), 1<<16)
+	var packed bytes.Buffer
+	z := gzip.NewWriter(&packed)
+	z.Write(raw)
+	z.Close()
+	src := filepath.Join(dir, "release.img.gz")
+	os.WriteFile(src, packed.Bytes(), 0600)
+	digest := sha256.New()
+	out, e := stage(context.Background(), src, dir, nil, digest)
+	if e != nil {
+		t.Fatal(e)
+	}
+	got, _ := os.ReadFile(out)
+	if !bytes.Equal(got, raw) || hex.EncodeToString(digest.Sum(nil)) != fmt.Sprintf("%x", sha256.Sum256(raw)) {
+		t.Fatal("unpacked image differs")
+	}
+	// a cut-off file is refused and leaves nothing behind
+	os.WriteFile(src, packed.Bytes()[:packed.Len()/2], 0600)
+	before, _ := os.ReadDir(dir)
+	if _, e = stage(context.Background(), src, dir, nil, nil); e == nil {
+		t.Fatal("truncated file accepted")
+	}
+	if after, _ := os.ReadDir(dir); len(after) != len(before) {
+		t.Fatal("partial image left behind")
 	}
 }

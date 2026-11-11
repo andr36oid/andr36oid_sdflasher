@@ -147,7 +147,7 @@ func run(version string, args []string, intro func()) (code int) {
 	fs := flag.NewFlagSet(exeName()+" -cli", flag.ContinueOnError)
 	var (
 		action    = fs.String("action", "", `what to do: "flash" (default), "hotfix", "kernel", "restore" or "list"`)
-		imagePath = fs.String("image", "", "path to a release image (.img, .img.xz or .img.zip); flash action")
+		imagePath = fs.String("image", "", "path to a release image (.img, .img.xz, .img.gz or .img.zip); flash action")
 		download  = fs.Bool("download", false, "download the release image from GitHub instead of a local file; flash action")
 		all       = fs.Bool("all", false, "also list fixed disks (advanced, dangerous)")
 		modeFlag  = fs.String("mode", "", "install or update; prompted if omitted (flash action)")
@@ -259,7 +259,7 @@ func runFlash(o opts) int {
 		path = p
 	}
 	if path == "" {
-		path = strings.Trim(strings.TrimSpace(prompt(o.in, "Path to the release image (.img, .img.xz or .img.zip), or Enter to download one: ")), "\"'")
+		path = strings.Trim(strings.TrimSpace(prompt(o.in, "Path to the release image (.img, .img.xz, .img.gz or .img.zip), or Enter to download one: ")), "\"'")
 		if path == "" {
 			p, err := downloadRelease(o.in, o.cache)
 			if err != nil {

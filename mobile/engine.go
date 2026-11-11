@@ -147,7 +147,7 @@ func (s *Session) Load(path string, observer Observer) (string, error) {
 	}
 	s.image = nil
 	phase := "checking"
-	if ext := filepath.Ext(path); strings.EqualFold(ext, ".zip") || strings.EqualFold(ext, ".xz") {
+	if ext := filepath.Ext(path); strings.EqualFold(ext, ".zip") || strings.EqualFold(ext, ".xz") || strings.EqualFold(ext, ".gz") {
 		phase = "extracting"
 	}
 	im, e := firmware.Load(context.Background(), path, s.dir, progress(observer, phase))

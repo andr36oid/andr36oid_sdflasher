@@ -475,8 +475,8 @@ func (s *screen) chooseImage() {
 		r.Close()
 		s.loadImage(p)
 	}, s.win)
-	// release images come packed: only .img.xz and .img.zip are listed
-	d.SetFilter(storage.NewExtensionFileFilter([]string{".xz", ".zip"}))
+	// release images come packed: only .img.xz, .img.gz and .img.zip are listed
+	d.SetFilter(storage.NewExtensionFileFilter([]string{".xz", ".gz", ".zip"}))
 	directory, _ := os.Getwd()
 	if s.im != nil && s.im.Source != "" {
 		directory = filepath.Dir(s.im.Source)

@@ -89,7 +89,11 @@ func usable(rel []release) []Asset {
 			if strings.HasSuffix(n, ".img.zip") && names[strings.TrimSuffix(n, ".zip")+".xz"] {
 				continue
 			}
-			if strings.HasSuffix(n, ".img.xz") || strings.HasSuffix(n, ".img.zip") || strings.HasSuffix(n, ".img") {
+			// one image file per build, in whichever packing; of several the smaller .img.xz
+			if strings.HasSuffix(n, ".img.gz") && (names[strings.TrimSuffix(n, ".gz")+".xz"] || names[strings.TrimSuffix(n, ".gz")+".zip"]) {
+				continue
+			}
+			if strings.HasSuffix(n, ".img.xz") || strings.HasSuffix(n, ".img.zip") || strings.HasSuffix(n, ".img.gz") || strings.HasSuffix(n, ".img") {
 				a.Release = r.Name
 				if a.Release == "" {
 					a.Release = r.Tag
