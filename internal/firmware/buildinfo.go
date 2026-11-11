@@ -15,10 +15,32 @@ import (
 // to the exact installed build.
 const BuildInfoFile = "andr36oid-build.txt"
 
+// BuildInfoV2File replaces it from the hybrid release on (format=2): BOOT keeps its
+// pictures once per screen resolution there, which flashers before this one cannot
+// install. They look only for the old name and so turn such a release down.
+const BuildInfoV2File = "andr36oid-build-v2.txt"
+
+// readBuildInfo returns the release's own description, the newer file first. Each
+// name carries its own format only: format=2 under the old name is still refused.
+func readBuildInfo(boot filesystem.FileSystem) ([]byte, error) {
+	name, format := BuildInfoV2File, "2"
+	b, e := ReadFile(boot, "/"+name, 64<<10)
+	if e != nil {
+		name, format = BuildInfoFile, "1"
+		if b, e = ReadFile(boot, "/"+name, 64<<10); e != nil {
+			return nil, e
+		}
+	}
+	if m, _ := ParseBuildInfo(b); m["format"] != format {
+		return nil, errors.New(name + " has another format than " + format)
+	}
+	return b, nil
+}
+
 // BuildIdentity returns the exact identity used by the on-device hotfix applier.
 // Missing or incomplete build facts must never match an index entry.
 func BuildIdentity(boot filesystem.FileSystem) string {
-	b, e := ReadFile(boot, "/"+BuildInfoFile, 64<<10)
+	b, e := readBuildInfo(boot)
 	if e != nil {
 		return ""
 	}
@@ -29,7 +51,7 @@ func BuildIdentity(boot filesystem.FileSystem) string {
 	return m["ro.andr36oid.version"] + "|" + m["ro.product.build.version.incremental"]
 }
 
-// ParseBuildInfo reads key=value lines. Only format=1 is understood: another or no
+// ParseBuildInfo reads key=value lines. Formats 1 and 2 are understood: another or no
 // format line means the image is not compatible.
 func ParseBuildInfo(b []byte) (map[string]string, bool) {
 	m := map[string]string{}
@@ -39,7 +61,7 @@ func ParseBuildInfo(b []byte) (map[string]string, bool) {
 			m[k] = v
 		}
 	}
-	return m, m["format"] == "1"
+	return m, m["format"] == "1" || m["format"] == "2"
 }
 
 // FactKeys are the lines of andr36oid-build.txt kept in Image.Facts.
@@ -54,7 +76,7 @@ var ErrNoBuildInfo = errors.New("this image is not compatible with this flasher:
 // releaseFacts checks the Treble mount setup and returns the build properties the
 // flasher uses, all from andr36oid-build.txt on BOOT.
 func releaseFacts(boot filesystem.FileSystem) ([]byte, error) {
-	b, e := ReadFile(boot, "/"+BuildInfoFile, 64<<10)
+	b, e := readBuildInfo(boot)
 	if e != nil {
 		return nil, ErrNoBuildInfo
 	}

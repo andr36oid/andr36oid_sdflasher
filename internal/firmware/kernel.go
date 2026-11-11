@@ -98,7 +98,7 @@ func ReadKernelIdentity(boot filesystem.FileSystem) (KernelIdentity, error) {
 			return state, nil
 		}
 	}
-	b, err := ReadFile(boot, "/"+BuildInfoFile, 64<<10)
+	b, err := readBuildInfo(boot)
 	if err != nil {
 		return state, err
 	}

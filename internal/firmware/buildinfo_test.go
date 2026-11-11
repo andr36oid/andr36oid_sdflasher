@@ -21,7 +21,7 @@ func TestParseBuildInfo(t *testing.T) {
 	if !ok || m["system_fs"] != "erofs" || m["ro.andr36oid.version"] != "v2026-10-18-release" {
 		t.Fatalf("parsed %v %v", ok, m)
 	}
-	for _, b := range []string{"", "system_fs=erofs\n", "format=2\nro.treble.enabled=true\n"} {
+	for _, b := range []string{"", "system_fs=erofs\n", "format=3\nro.treble.enabled=true\n"} {
 		if _, ok := ParseBuildInfo([]byte(b)); ok {
 			t.Errorf("%q accepted", b)
 		}

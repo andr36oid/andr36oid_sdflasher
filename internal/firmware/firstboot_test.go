@@ -1,6 +1,7 @@
 package firmware
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/andr36oid/andr36oid-sdflasher/internal/layout"
@@ -30,6 +31,7 @@ func TestCardFirstBoot(t *testing.T) {
 		{"prepared, never started", map[string]string{BuildInfoFile: prepared}, []string{"userdata", "AUTOAPK"}, false, false},
 		{"prepared, apps gone but no record", map[string]string{BuildInfoFile: prepared}, []string{"userdata"}, false, false},
 		{"prepared, set up", map[string]string{BuildInfoFile: prepared, FirstBootFile: "done=1\nbuild=" + id + "\nlayout=prepared-1\n"}, []string{"userdata"}, true, true},
+		{"hybrid release, set up", map[string]string{BuildInfoV2File: strings.Replace(prepared, "format=1", "format=2", 1), FirstBootFile: "done=1\nbuild=" + id + "\n"}, []string{"userdata"}, true, true},
 		{"record of another build", map[string]string{BuildInfoFile: prepared, FirstBootFile: "done=1\nbuild=other|x\n"}, []string{"userdata"}, false, true},
 		{"record not done", map[string]string{BuildInfoFile: prepared, FirstBootFile: "done=0\nbuild=" + id + "\n"}, []string{"userdata"}, false, true},
 	} {

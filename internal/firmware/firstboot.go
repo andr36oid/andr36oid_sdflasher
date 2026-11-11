@@ -35,7 +35,7 @@ func CardFirstBoot(d io.ReaderAt, tab layout.Table, identity string) FirstBoot {
 		return f
 	}
 	records := false
-	if b, e := ReadFile(boot, "/"+BuildInfoFile, 64<<10); e == nil {
+	if b, e := readBuildInfo(boot); e == nil {
 		if m, ok := ParseBuildInfo(b); ok && m["layout"] != "" {
 			records = true
 		}
