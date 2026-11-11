@@ -36,6 +36,8 @@ type Request struct {
 	ConvertDTB      bool                  `json:"convert_dtb,omitempty"`
 	SystemImage     string                `json:"system_image,omitempty"`
 	SystemAccepted  bool                  `json:"system_accepted,omitempty"`
+	// Guest is the dArkOSen release that gets its own partition on a fresh card.
+	Guest *flash.Guest `json:"guest,omitempty"`
 }
 type Result struct {
 	KernelIdentity *firmware.KernelIdentity `json:"kernel_identity,omitempty"`
@@ -213,7 +215,7 @@ func Worker(job string) error {
 				req.Profile = conv.Profile
 			}
 		}
-		p, e := flash.Build(im, card, d.Size, req.Mode, req.Profile, req.NoROMs, req.UserdataGiB)
+		p, e := flash.BuildWith(im, card, d.Size, req.Mode, req.Profile, req.NoROMs, req.UserdataGiB, flash.Options{Guest: req.Guest})
 		if e != nil {
 			return e
 		}
