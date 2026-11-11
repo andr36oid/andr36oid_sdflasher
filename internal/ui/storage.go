@@ -34,7 +34,7 @@ func (s *screen) storageText() string {
 	if s.noROMs.Checked {
 		return s.t("Use all available storage for Android")
 	}
-	android, games := flash.UserdataLayout(s.drive.Size, s.userdataGiB, false)
+	android, games := s.split(s.userdataGiB)
 	if games == 0 {
 		return s.t("Use all available storage for Android")
 	}
@@ -48,6 +48,9 @@ func (s *screen) refreshStorage() {
 	max := 0
 	if s.drive != nil {
 		max = flash.MaxUserdataGiB(s.drive.Size)
+		if s.im != nil && s.im.Prepared() {
+			max = flash.MaxPreparedGiB(s.im, s.drive.Size, s.guestBytes())
+		}
 	}
 	if s.userdataGiB > max {
 		s.userdataGiB = 0
@@ -60,7 +63,7 @@ func (s *screen) refreshStorage() {
 	}
 	value := s.userdataGiB
 	if value == 0 {
-		android, _ := flash.UserdataLayout(s.drive.Size, 0, false)
+		android, _ := s.split(0)
 		value = flash.RoundGiB(android)
 	}
 	s.sizeSetting = true
@@ -74,4 +77,19 @@ func (s *screen) refreshStorage() {
 	} else {
 		s.sizeAuto.Enable()
 	}
+}
+
+// split is what Android and the games partition get with wantGiB for Android (0: the
+// recommended size): by the flasher's own layout for releases it partitions the card
+// for, else by the console's first-boot rule.
+func (s *screen) split(wantGiB int) (android, games int64) {
+	if s.im != nil {
+		if a, g, prepared, e := flash.PreparedSizes(s.im, s.drive.Size, wantGiB, false, s.guestBytes()); prepared {
+			if e != nil {
+				return 0, 0
+			}
+			return a, g
+		}
+	}
+	return flash.UserdataLayout(s.drive.Size, wantGiB, false)
 }

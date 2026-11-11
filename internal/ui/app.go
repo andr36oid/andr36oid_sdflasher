@@ -69,6 +69,12 @@ type screen struct {
 	sizeAuto                            *widget.Button
 	sizeSetting                         bool // refreshStorage is moving the slider
 	userdataGiB                         int  // Android size for a new card, 0: recommended
+	guest                               *catalog.GuestRelease
+	guestFor                            string // release image the dArkOSen lookup was made for
+	guestCheck                          *widget.Check
+	guestInfo                           *widget.Label
+	guestBox                            *fyne.Container
+	guestReady                          *flash.Guest // downloaded for the write being confirmed
 	sumValues                           [6]*widget.Label
 	modeHelp                            *widget.Label
 	progress                            *widget.ProgressBar
@@ -237,6 +243,7 @@ func (s *screen) build() {
 	s.driveSelect.PlaceHolder = s.t("Select a microSD card")
 	s.noROMs = widget.NewCheck(s.t("Use all available storage for Android"), func(bool) { s.ready() })
 	s.buildStorage()
+	s.buildGuest()
 	s.mode = widget.NewRadioGroup([]string{s.t("Install a new card (erase)"), s.t("Update an existing installation")}, func(v string) {
 		s.updating = v == s.t("Update an existing installation")
 		if s.updating {
@@ -346,6 +353,7 @@ func (s *screen) ready() {
 	} else {
 		s.action.Disable()
 	}
+	s.refreshGuest()
 	s.refreshStorage()
 	s.refreshSteps()
 	if s.step == stepWrite {
@@ -592,6 +600,7 @@ func (s *screen) populateImage() {
 	sort.Strings(opts)
 	s.console.SetOptions(opts)
 	s.console.ClearSelected()
+	s.lookupGuest()
 }
 
 // driveLabel is a drive as the list shows it: fixed disks are marked
@@ -816,7 +825,16 @@ func (s *screen) confirm() {
 	if s.updating {
 		mode = "update"
 	}
-	p, e := flash.Build(s.im, *s.card, s.drive.Size, mode, s.profile, s.noROMs.Checked, s.userdataGiB)
+	// dArkOSen is downloaded before the question, so that saying yes starts the write
+	if s.guestBytes() > 0 && s.guestReady == nil {
+		s.withGuest(func(g *flash.Guest) {
+			s.guestReady = g
+			s.confirm()
+			s.guestReady = nil
+		})
+		return
+	}
+	p, e := flash.BuildWith(s.im, *s.card, s.drive.Size, mode, s.profile, s.noROMs.Checked, s.userdataGiB, flash.Options{Guest: s.guestReady})
 	if e != nil {
 		s.showError(e)
 		return
@@ -900,6 +918,7 @@ func (s *screen) write(p *flash.Plan) {
 		container.NewVScroll(container.NewVBox(phase, bar, outcome, m.img, legend(s.locale), details, eject)))))
 	req := jobs.Request{Action: "write", Drive: *s.drive, Image: s.im.Path, ImageHash: s.im.SHA256, CardFingerprint: s.card.Fingerprint, Mode: p.Mode, Profile: s.profile, NoROMs: p.NoROMs, UserdataGiB: p.UserdataGiB, CustomDTB: s.custom, CustomAccepted: s.customAccepted, ConvertDTB: s.convert, SystemImage: s.system, SystemAccepted: s.systemAccepted}
 	req.ImageSource = s.im.Source
+	req.Guest = p.Guest
 	var speed *flash.CardSpeed
 	go func() {
 		result, e := jobs.Run(req, func(p flash.Progress) {

@@ -233,6 +233,7 @@ func (s *screen) pagesFor(advanced fyne.CanvasObject) []*fyne.Container {
 			s.noROMs,
 			wrapped(s.t("Unchecked: choose below how much of the card Android gets. The rest becomes a games partition readable on your computer. Updates keep the existing arrangement.")),
 			s.storage,
+			s.guestBox,
 			widget.NewSeparator(),
 			s.systemSection(),
 		),

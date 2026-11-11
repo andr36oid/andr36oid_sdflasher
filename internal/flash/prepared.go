@@ -259,3 +259,28 @@ func GuestFits(im *firmware.Image, g *Guest) error {
 	}
 	return nil
 }
+
+// PreparedSizes is what a prepared card gives Android (once the bundled apps are
+// installed and their space is Android's) and the games partition, for display.
+// prepared is false for a release the flasher doesn't partition the card for.
+func PreparedSizes(im *firmware.Image, size int64, wantGiB int, noROMs bool, guestBytes int64) (android, games int64, prepared bool, err error) {
+	apps, ok := canPrepare(im)
+	if !ok {
+		return 0, 0, false, nil
+	}
+	p, e := PreparedLayout(size, apps.Size(), wantGiB, noROMs, guestBytes)
+	if e != nil {
+		return 0, 0, true, e
+	}
+	return p.Android(), p.ROMs.Bytes(), true, nil
+}
+
+// MaxPreparedGiB is MaxUserdataGiB for a prepared card.
+func MaxPreparedGiB(im *firmware.Image, size, guestBytes int64) int {
+	for g := int(size / gib); g >= MinUserdataGiB; g-- {
+		if _, games, ok, e := PreparedSizes(im, size, g, false, guestBytes); ok && e == nil && games > 0 {
+			return g
+		}
+	}
+	return 0
+}
