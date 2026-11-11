@@ -194,7 +194,6 @@
   "Verifying and restoring the recovery backup…": "リカバリーバックアップを検証して復元しています…",
   "Wait for the operation to finish before closing. Keep the card connected.": "閉じる前に、処理が完了するまで待ってください。カードは接続したままにしてください。",
   "Want to add your own apps? Before the first start, connect the card to a computer and copy APK files to its AUTOAPK drive. The console offers them during setup.": "自分のアプリも追加しますか？ 初回起動の前に、カードをコンピューターに接続し、APK ファイルを AUTOAPK ドライブにコピーしてください。本体のセットアップ時に表示されます。",
-  "Want to add your own apps? Copy APK files to the AUTOAPK drive now, and the console offers them during setup. This only works before the console is set up: its first start moves AUTOAPK, and once the apps are installed, the space goes to Android.": "自分のアプリも追加しますか？ 今すぐ APK ファイルを AUTOAPK ドライブにコピーしておけば、本体のセットアップ時に表示されます。これは本体のセットアップ前にだけ有効です。初回起動で AUTOAPK が移動し、アプリのインストールが済むと、その領域は Android に割り当てられます。",
   "We don’t recommend specific brands: a brand label doesn’t prove a card is genuine. Buy quality storage from reputable sellers.": "特定のブランドはおすすめしません。ブランド名があっても、カードが正規品であるとは限りません。信頼できる販売店で、品質の高いストレージを購入してください。",
   "What should happen to the card?": "カードをどうしますか?",
   "Working…": "処理中…",

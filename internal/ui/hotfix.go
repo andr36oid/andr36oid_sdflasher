@@ -78,6 +78,10 @@ func (s *screen) offerHotfixes(drive platform.Drive, expected string) {
 		if e == nil && expected != "" && result.BuildIdentity != expected {
 			e = errors.New(firmware.HotfixChanged)
 		}
+		// never on a card whose first setup is still to come or under way
+		if e == nil && result.FirstBoot != nil && !result.FirstBoot.Done {
+			e = errors.New(s.t("The console has not finished its first setup on this card. Put the card in the console, finish the setup, then apply hotfixes."))
+		}
 		if e == nil {
 			var index *firmware.HotfixIndex
 			index, e = firmware.FetchHotfixIndex(ctx, firmware.HotfixIndexURL)

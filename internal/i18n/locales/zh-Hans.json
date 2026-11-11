@@ -194,7 +194,6 @@
   "Verifying and restoring the recovery backup…": "正在验证并恢复备份…",
   "Wait for the operation to finish before closing. Keep the card connected.": "等操作完成后再关闭，别拔出存储卡。",
   "Want to add your own apps? Before the first start, connect the card to a computer and copy APK files to its AUTOAPK drive. The console offers them during setup.": "想加入自己的应用？首次启动前，把存储卡连到电脑，将 APK 文件复制到它的 AUTOAPK 驱动器。掌机会在设置时列出它们。",
-  "Want to add your own apps? Copy APK files to the AUTOAPK drive now, and the console offers them during setup. This only works before the console is set up: its first start moves AUTOAPK, and once the apps are installed, the space goes to Android.": "想加入自己的应用？现在把 APK 文件复制到 AUTOAPK 驱动器，掌机会在设置时列出它们。只有在掌机完成设置之前才行：首次启动会移动 AUTOAPK，应用装好后这块空间会交给 Android。",
   "We don’t recommend specific brands: a brand label doesn’t prove a card is genuine. Buy quality storage from reputable sellers.": "我们不推荐具体品牌：有品牌标识不代表卡就是正品。找靠谱的卖家，买质量可靠的存储卡。",
   "What should happen to the card?": "要对存储卡做什么？",
   "Working…": "正在处理…",

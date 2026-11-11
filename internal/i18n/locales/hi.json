@@ -194,7 +194,6 @@
   "Verifying and restoring the recovery backup…": "रिकवरी बैकअप की जाँच करके रिस्टोर किया जा रहा है…",
   "Wait for the operation to finish before closing. Keep the card connected.": "बंद करने से पहले काम पूरा होने दें। कार्ड जुड़ा रहने दें।",
   "Want to add your own apps? Before the first start, connect the card to a computer and copy APK files to its AUTOAPK drive. The console offers them during setup.": "अपने ऐप जोड़ना चाहते हैं? पहली बार चालू करने से पहले कार्ड को कंप्यूटर से जोड़ें और APK फ़ाइलें उसकी AUTOAPK ड्राइव पर कॉपी करें। कंसोल सेटअप के दौरान उन्हें दिखाएगा।",
-  "Want to add your own apps? Copy APK files to the AUTOAPK drive now, and the console offers them during setup. This only works before the console is set up: its first start moves AUTOAPK, and once the apps are installed, the space goes to Android.": "अपने ऐप जोड़ना चाहते हैं? अभी APK फ़ाइलें AUTOAPK ड्राइव पर कॉपी करें, कंसोल सेटअप के दौरान उन्हें दिखाएगा। यह सिर्फ़ कंसोल सेट अप होने से पहले काम करता है: पहली बार चालू करने पर AUTOAPK पार्टिशन की जगह बदल जाती है, और ऐप इंस्टॉल होने के बाद वह जगह Android को मिल जाती है।",
   "We don’t recommend specific brands: a brand label doesn’t prove a card is genuine. Buy quality storage from reputable sellers.": "हम किसी खास ब्रांड की सलाह नहीं देते: ब्रांड का लोगो कार्ड के असली होने की गारंटी नहीं है। भरोसेमंद विक्रेताओं से अच्छी क्वालिटी का स्टोरेज खरीदें।",
   "What should happen to the card?": "कार्ड के साथ क्या करना है?",
   "Working…": "काम जारी है…",

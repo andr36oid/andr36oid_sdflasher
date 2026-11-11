@@ -922,7 +922,12 @@ func (s *screen) write(p *flash.Plan) {
 	outcome.Hide()
 	bar := widget.NewProgressBar()
 	details := wrapped(s.t("Each block summarizes a region of the card. Preserved regions are never written."))
+	waitCtx, stopWaiting := context.WithCancel(context.Background())
+	waiting := wrapped("")
+	waiting.TextStyle = fyne.TextStyle{Bold: true}
+	waiting.Hide()
 	back := widget.NewButton(s.t("Back to setup"), func() {
+		stopWaiting()
 		s.win.SetContent(s.home)
 		s.card = nil
 		s.drive = nil
@@ -955,7 +960,7 @@ func (s *screen) write(p *flash.Plan) {
 	eject.Importance = widget.HighImportance
 	eject.Hide()
 	s.win.SetContent(container.NewPadded(container.NewBorder(container.NewVBox(title, widget.NewLabel(s.drive.Label()), widget.NewSeparator()), back, nil, nil,
-		container.NewVScroll(container.NewVBox(phase, bar, outcome, m.img, legend(s.locale), details, eject)))))
+		container.NewVScroll(container.NewVBox(phase, bar, outcome, m.img, legend(s.locale), details, eject, waiting)))))
 	req := jobs.Request{Action: "write", Drive: *s.drive, Image: s.im.Path, ImageHash: s.im.SHA256, CardFingerprint: s.card.Fingerprint, Mode: p.Mode, Profile: s.profile, NoROMs: p.NoROMs, UserdataGiB: p.UserdataGiB, CustomDTB: s.custom, CustomAccepted: s.customAccepted, ConvertDTB: s.convert, SystemImage: s.system, SystemAccepted: s.systemAccepted}
 	req.ImageSource = s.im.Source
 	req.Guest = p.Guest
@@ -1011,8 +1016,19 @@ func (s *screen) write(p *flash.Plan) {
 				outcome.Show()
 			}
 			if p.Mode == "install" {
-				details.SetText(s.t("Want to add your own apps? Copy APK files to the AUTOAPK drive now, and the console offers them during setup. This only works before the console is set up: its first start moves AUTOAPK, and once the apps are installed, the space goes to Android."))
+				text := s.t(firstBootSteps)
+				if p.Prepared && !p.NoROMs {
+					text = s.t("The games drive (EASYROMS) is ready: you can copy games to it now, before the first start.") + "\n\n" + text
+				}
+				text += "\n\n" + s.t("Want to add your own apps? Copy APK files to the AUTOAPK drive now, and the console offers them during setup.")
+				details.SetText(text)
 				eject.Show()
+				// fixes for this build are offered when the card is back from its first setup
+				identity := s.im.BuildIdentity
+				s.awaitFirstBoot(waitCtx, drive, identity, waiting, func(d platform.Drive) {
+					s.offerKernelUpdate(d, identity, func() { s.offerHotfixes(d, identity) })
+				})
+				return
 			} else {
 				details.SetText(s.t("Your card has been written and verified. Apps, settings, saves, and games were preserved.") + "\n" + s.t("Recovery backups") + ": " + result.Backup)
 			}

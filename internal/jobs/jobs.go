@@ -8,6 +8,7 @@ import (
 	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/layout"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/platform"
 	"io"
 	"os"
@@ -42,6 +43,7 @@ type Request struct {
 type Result struct {
 	KernelIdentity *firmware.KernelIdentity `json:"kernel_identity,omitempty"`
 	BuildIdentity  string                   `json:"build_identity,omitempty"`
+	FirstBoot      *firmware.FirstBoot      `json:"first_boot,omitempty"`
 	HotfixResults  []firmware.HotfixResult  `json:"hotfix_results,omitempty"`
 	Done           bool                     `json:"done"`
 	Error          string                   `json:"error,omitempty"`
@@ -109,7 +111,12 @@ func Worker(job string) error {
 			}
 			defer h.Close()
 			if req.Action == "hotfix-list" {
-				result.BuildIdentity, _, e = firmware.CardBuildIdentity(h.File, d.Size)
+				var tab layout.Table
+				result.BuildIdentity, tab, e = firmware.CardBuildIdentity(h.File, d.Size)
+				if e == nil {
+					first := firmware.CardFirstBoot(h.File, tab, result.BuildIdentity)
+					result.FirstBoot = &first
+				}
 				return e
 			}
 			h.Remount = true
