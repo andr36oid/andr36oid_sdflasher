@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/andr36oid/andr36oid-sdflasher/internal/exfat"
@@ -130,8 +131,8 @@ func canPrepare(im *firmware.Image) (layout.Partition, bool) {
 func (p *Plan) prepare(im *firmware.Image, apps layout.Partition, wantGiB int, noROMs bool, g *Guest) error {
 	var guestBytes int64
 	if g != nil {
-		if !im.Subsystem() {
-			return errors.New("this release cannot run dArkOSen from its own partition")
+		if e := GuestFits(im, g); e != nil {
+			return e
 		}
 		if g.Size <= 0 || g.Size%512 != 0 || g.PartitionBytes < g.Size || len(g.SHA256) != 64 || g.Path == "" ||
 			g.Name == "" || strings.ContainsAny(g.Name, "/\\") {
@@ -229,4 +230,32 @@ func serial() uint32 {
 	var b [4]byte
 	rand.Read(b[:])
 	return binary.LittleEndian.Uint32(b[:])
+}
+
+var buildStamp = regexp.MustCompile(`(\d{8})\.(\d{6})`)
+var minimumStamp = regexp.MustCompile(`^(\d{8})(?:\.(\d{6}))?$`)
+
+// GuestFits says whether a dArkOSen release may go on a card with this andr36oid
+// release: the image has to say it runs dArkOSen from a partition, and be at least the
+// build the dArkOSen release asks for (YYYYMMDD or YYYYMMDD.HHMMSS, "" for any). The
+// flasher offers dArkOSen only when this is nil.
+func GuestFits(im *firmware.Image, g *Guest) error {
+	if !im.Subsystem() {
+		return errors.New("this release cannot run dArkOSen from its own partition")
+	}
+	if g.Minimum == "" {
+		return nil
+	}
+	want := minimumStamp.FindStringSubmatch(g.Minimum)
+	have := buildStamp.FindStringSubmatch(im.BuildIdentity)
+	if want == nil || have == nil {
+		return errors.New("this dArkOSen release needs a newer flasher or a newer andr36oid release")
+	}
+	if want[2] == "" {
+		want[2] = "000000"
+	}
+	if have[1]+have[2] < want[1]+want[2] {
+		return fmt.Errorf("this dArkOSen release needs andr36oid %s or newer", g.Minimum)
+	}
+	return nil
 }

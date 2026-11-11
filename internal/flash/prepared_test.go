@@ -235,3 +235,21 @@ func TestPreparedRefusesADamagedGuest(t *testing.T) {
 		t.Fatal("card changed")
 	}
 }
+
+func TestGuestOnlyForReleasesThatFit(t *testing.T) {
+	im := &firmware.Image{BuildIdentity: "v2026-11-11-release|eng.kenny.20261111.202641", Facts: map[string]string{"layout": "prepared-1", "subsystem": "release-1"}}
+	for min, ok := range map[string]bool{"": true, "20261111": true, "20261111.202641": true, "20261111.202642": false, "20261112": false, "20261001.000000": true, "soon": false} {
+		if e := GuestFits(im, &Guest{Minimum: min}); (e == nil) != ok {
+			t.Fatal(min, e)
+		}
+	}
+	for _, facts := range []map[string]string{nil, {"layout": "prepared-1"}, {"subsystem": "release-1"}, {"layout": "prepared-2", "subsystem": "release-1"}} {
+		if GuestFits(&firmware.Image{BuildIdentity: im.BuildIdentity, Facts: facts}, &Guest{}) == nil {
+			t.Fatal("offered for", facts)
+		}
+	}
+	// a release that doesn't say when it was built can't meet a minimum
+	if GuestFits(&firmware.Image{Facts: im.Facts}, &Guest{Minimum: "20261111"}) == nil {
+		t.Fatal("offered without a build date")
+	}
+}
