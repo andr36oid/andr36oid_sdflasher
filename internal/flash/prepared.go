@@ -153,6 +153,8 @@ func (p *Plan) prepare(im *firmware.Image, apps layout.Partition, wantGiB int, n
 		p.Table.Parts = append(p.Table.Parts, layout.Partition{Number: number, Name: name, Start: uint64(s.First), End: uint64(s.Last), Type: kind, ID: layout.GUID()})
 	}
 	add(6, "userdata", parts.Userdata, layout.LinuxType)
+	// "do not automount", as the console's own resize sets it (sgdisk attribute 63)
+	p.Table.Parts[len(p.Table.Parts)-1].Flags = 1 << 63
 	add(13, AutoAPK, parts.Apps, apps.Type)
 	// Everything of the image up to the bundled apps, then the apps at their new place
 	p.Writes = append(p.Writes,

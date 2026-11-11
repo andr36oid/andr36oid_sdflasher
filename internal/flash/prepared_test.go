@@ -132,6 +132,9 @@ func TestPreparedInstallWritesEveryPartition(t *testing.T) {
 		t.Fatal("the image's own apps partition is still in the table")
 	}
 	data, _ := tab.Find("userdata")
+	if data.Flags != 1<<63 {
+		t.Fatalf("userdata attributes %#x, the console sets bit 63", data.Flags)
+	}
 	apps, _ := tab.Find(AutoAPK)
 	roms, _ := tab.Find("EASYROMS")
 	guest, _ := tab.Find(GuestPartition)
