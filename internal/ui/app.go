@@ -776,24 +776,64 @@ func (s *screen) releases() {
 				s.info(s.t("No image downloads available"), s.t("No disk images are attached to andr36oid/releases yet. You can choose an image from disk."), s.win)
 				return
 			}
-			var opts []string
-			for _, a := range assets {
-				opts = append(opts, a.Release+" · "+a.Name)
+			// each release's recommended image first; the other kernels only on request
+			first, others := catalog.Split(assets)
+			shown := first
+			label := func(a catalog.Asset) string {
+				text := a.Release + " · " + a.Name
+				if k, g, ok := catalog.Variant(a.Name); ok {
+					text = a.Release + " · " + s.variantText(k, g)
+					if catalog.Recommended(a.Name) {
+						text += " · " + s.t("recommended")
+					}
+				}
+				return text
 			}
-			pick := widget.NewSelect(opts, nil)
+			labels := func(list []catalog.Asset) []string {
+				var opts []string
+				for _, a := range list {
+					opts = append(opts, label(a))
+				}
+				return opts
+			}
+			pick := widget.NewSelect(labels(shown), nil)
 			pick.PlaceHolder = s.t("Choose a release image")
-			dialog.ShowCustomConfirm(s.t("Download a release"), s.t("Download"), s.t("Cancel"), container.NewVBox(wrapped(s.t("Only Treble images can be installed. Each download is checked before the card can be written.")), pick), func(ok bool) {
+			box := container.NewVBox(wrapped(s.t("Only Treble images can be installed. Each download is checked before the card can be written.")), pick)
+			if len(first) > 0 {
+				pick.SetSelectedIndex(0)
+			}
+			if len(others) > 0 {
+				more := widget.NewCheck(s.t("Other kernels"), func(on bool) {
+					shown = first
+					if on {
+						shown = append(append([]catalog.Asset{}, first...), others...)
+					}
+					pick.SetOptions(labels(shown))
+					pick.SetSelectedIndex(0)
+				})
+				box.Add(more)
+				box.Add(wrapped(s.t("Try the recommended image first. If something does not work on your console, flash the same release with kernel 4.19: your apps, saves and games stay when you choose Update.")))
+			}
+			dialog.ShowCustomConfirm(s.t("Download a release"), s.t("Download"), s.t("Cancel"), box, func(ok bool) {
 				if !ok {
 					return
 				}
 				i := pick.SelectedIndex()
-				if i < 0 {
+				if i < 0 || i >= len(shown) {
 					return
 				}
-				s.download(assets[i])
+				s.download(shown[i])
 			}, s.win)
 		})
 	}()
+}
+
+// variantText names an image's kernel and graphics driver.
+func (s *screen) variantText(kernel, gpu string) string {
+	if gpu == "vulkan" {
+		return s.t("kernel %s, Vulkan", kernel)
+	}
+	return s.t("kernel %s, OpenGL ES only", kernel)
 }
 func (s *screen) download(a catalog.Asset) {
 	s.setBusy(true)
