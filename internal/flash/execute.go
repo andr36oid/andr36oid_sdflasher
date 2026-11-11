@@ -178,10 +178,33 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 		}
 		systemSize = sst.Size()
 	}
+	var guest *os.File
+	if p.Guest != nil {
+		if guest, e = os.Open(p.Guest.Path); e != nil {
+			return e
+		}
+		defer guest.Close()
+		gst, e := guest.Stat()
+		if e != nil {
+			return e
+		}
+		if gst.Size() != p.Guest.Size {
+			return errors.New("the dArkOSen image is not the size its release says")
+		}
+	}
 	for _, w := range p.Writes {
 		if w.Data != nil {
 			if int64(len(w.Data)) != w.Length {
 				return errors.New("invalid partition table payload")
+			}
+			continue
+		}
+		if w.Zero {
+			continue
+		}
+		if w.Guest {
+			if guest == nil || w.Length != p.Guest.Size {
+				return errors.New("dArkOSen image missing")
 			}
 			continue
 		}
@@ -216,6 +239,17 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 	if sum != im.SHA256 {
 		return errors.New("source image changed after inspection")
 	}
+	if guest != nil {
+		gsum, e := firmware.Hash(ctx, guest, p.Guest.Size, func(n, total int64) {
+			notify(Progress{Phase: "preflight", Name: "Checking dArkOSen", Done: n, Total: total})
+		})
+		if e != nil {
+			return e
+		}
+		if gsum != p.Guest.SHA256 {
+			return errors.New("the dArkOSen image is damaged; download it again")
+		}
+	}
 	snap, e := Snapshot(dst, p.Size)
 	if e != nil {
 		return e
@@ -246,6 +280,12 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 	sourceFor := func(w Write) (io.ReaderAt, int64) {
 		if w.Data != nil {
 			return bytes.NewReader(w.Data), 0
+		}
+		if w.Zero {
+			return zeros{}, 0
+		}
+		if w.Guest {
+			return guest, 0
 		}
 		if w.Boot {
 			return boot, 0
@@ -484,4 +524,11 @@ func restoreBackup(ctx context.Context, dst Device, dir string, size int64, chec
 		}
 	}
 	return restore(ctx, &guardedDevice{Device: dst, plan: p}, dir, &b)
+}
+
+type zeros struct{}
+
+func (zeros) ReadAt(b []byte, _ int64) (int, error) {
+	clear(b)
+	return len(b), nil
 }

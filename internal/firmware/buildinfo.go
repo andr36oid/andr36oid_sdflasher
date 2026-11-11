@@ -42,6 +42,9 @@ func ParseBuildInfo(b []byte) (map[string]string, bool) {
 	return m, m["format"] == "1"
 }
 
+// FactKeys are the lines of andr36oid-build.txt kept in Image.Facts.
+var FactKeys = []string{"layout", "subsystem", "kernel_line", "gpu_variant"}
+
 // ErrNoBuildInfo is an image without andr36oid-build.txt on BOOT: made before
 // 2026-10-18, or not an andr36oid release at all. This flasher doesn't read the system and
 // vendor partitions, so it can't check or install such an image.
@@ -66,7 +69,7 @@ func releaseFacts(boot filesystem.FileSystem) ([]byte, error) {
 		return nil, errors.New("Treble vendor manifest missing")
 	}
 	var props bytes.Buffer
-	for _, k := range []string{"ro.treble.enabled", "ro.andr36oid.version"} {
+	for _, k := range append([]string{"ro.treble.enabled", "ro.andr36oid.version"}, FactKeys...) {
 		if v, ok := m[k]; ok {
 			fmt.Fprintf(&props, "%s=%s\n", k, v)
 		}

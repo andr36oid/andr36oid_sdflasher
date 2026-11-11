@@ -7,9 +7,11 @@ import (
 	"github.com/diskfs/go-diskfs/backend/file"
 	"github.com/diskfs/go-diskfs/filesystem/fat32"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,10 +43,14 @@ const CustomWarning = "Custom DTBs must be built specifically for andr36oid. DTB
 
 func PrepareBoot(im *Image, profile string, noROMs, updating bool, custom, dir string, opts ...BootOptions) (string, error) {
 	var userdataGiB int
-	var keep map[string][]byte
+	var keep, files map[string][]byte
 	if len(opts) > 0 {
 		userdataGiB = opts[0].UserdataGiB
 		keep = opts[0].Keep
+		files = opts[0].Files
+		if opts[0].Prepared {
+			userdataGiB = 0
+		}
 	}
 	src, e := os.Open(im.Path)
 	if e != nil {
@@ -181,6 +187,14 @@ func PrepareBoot(im *Image, profile string, noROMs, updating bool, custom, dir s
 			if e = fs.Remove("userdata-size.txt"); e != nil {
 				return "", e
 			}
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		if strings.ContainsAny(name, "/\\") {
+			return "", errors.New("invalid BOOT file name")
+		}
+		if e = write(name, files[name]); e != nil {
+			return "", e
 		}
 	}
 	if updating {

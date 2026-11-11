@@ -231,7 +231,11 @@ func Worker(job string) error {
 				return e
 			}
 		}
-		boot, e := firmware.PrepareBoot(im, req.Profile, p.NoROMs, req.Mode == "update", req.CustomDTB, dir, firmware.BootOptions{ConvertDTB: req.ConvertDTB, UserdataGiB: p.UserdataGiB, Keep: p.Keep})
+		files, e := p.BootFiles()
+		if e != nil {
+			return e
+		}
+		boot, e := firmware.PrepareBoot(im, req.Profile, p.NoROMs, req.Mode == "update", req.CustomDTB, dir, firmware.BootOptions{ConvertDTB: req.ConvertDTB, UserdataGiB: p.UserdataGiB, Keep: p.Keep, Prepared: p.Prepared, Files: files})
 		if e != nil {
 			return e
 		}

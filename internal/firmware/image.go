@@ -43,7 +43,17 @@ type Image struct {
 	Version       string       `json:"version"`
 	BuildIdentity string       `json:"build_identity"`
 	SHA256        string       `json:"sha256"`
+	// Facts are what the release says about itself in andr36oid-build.txt beyond the
+	// version: layout, subsystem, kernel_line, gpu_variant.
+	Facts map[string]string `json:"facts,omitempty"`
 }
+
+// Prepared: the console accepts a card the flasher partitioned itself, so the first
+// start has nothing to move or resize.
+func (im *Image) Prepared() bool { return im.Facts["layout"] == "prepared-1" }
+
+// Subsystem: the console can run a dArkOSen release from its own partition.
+func (im *Image) Subsystem() bool { return im.Prepared() && im.Facts["subsystem"] == "release-1" }
 
 func ReadFile(fs filesystem.FileSystem, name string, limit int64) ([]byte, error) {
 	f, e := fs.OpenFile(name, os.O_RDONLY)
@@ -205,6 +215,14 @@ func inspect(ctx context.Context, p string, progress func(int64, int64), digest 
 	for _, line := range strings.Split(string(props), "\n") {
 		if strings.HasPrefix(line, "ro.andr36oid.version=") {
 			im.Version = strings.TrimPrefix(line, "ro.andr36oid.version=")
+		}
+		for _, k := range FactKeys {
+			if v, ok := strings.CutPrefix(line, k+"="); ok && v != "" {
+				if im.Facts == nil {
+					im.Facts = map[string]string{}
+				}
+				im.Facts[k] = v
+			}
 		}
 	}
 	if digest == "" {

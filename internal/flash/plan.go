@@ -27,6 +27,9 @@ type Write struct {
 	Boot         bool   `json:"boot"`
 	System       bool   `json:"system,omitempty"`
 	Data         []byte `json:"data,omitempty"`
+	// Zero writes zeros; Guest writes from the plan's dArkOSen image.
+	Zero  bool `json:"zero,omitempty"`
+	Guest bool `json:"guest,omitempty"`
 }
 type Plan struct {
 	Mode           string       `json:"mode"`
@@ -43,6 +46,10 @@ type Plan struct {
 	SystemImage string `json:"system_image,omitempty"`
 	// Keep are the user's files on the old BOOT that an update writes again.
 	Keep map[string][]byte `json:"keep,omitempty"`
+	// Prepared: the flasher makes userdata, the bundled apps and the games partition
+	// itself (prepared.go). Guest is the dArkOSen release that gets its own partition.
+	Prepared bool   `json:"prepared,omitempty"`
+	Guest    *Guest `json:"guest,omitempty"`
 }
 type Card struct {
 	Table       layout.Table `json:"table"`
@@ -220,6 +227,11 @@ func TooSmall(size int64) error {
 const AutoAPK = "AUTOAPK"
 
 func Build(im *firmware.Image, card Card, size int64, mode, profile string, noROMs bool, userdataGiB int) (*Plan, error) {
+	return BuildWith(im, card, size, mode, profile, noROMs, userdataGiB, Options{})
+}
+
+// BuildWith is Build with the choices only some releases offer.
+func BuildWith(im *firmware.Image, card Card, size int64, mode, profile string, noROMs bool, userdataGiB int, opts Options) (*Plan, error) {
 	if mode != "install" && mode != "update" {
 		return nil, errors.New("invalid operation")
 	}
@@ -244,9 +256,15 @@ func Build(im *firmware.Image, card Card, size int64, mode, profile string, noRO
 	p := &Plan{Mode: mode, Size: size, Profile: profile, NoROMs: noROMs, UserdataGiB: userdataGiB, OldFingerprint: card.Fingerprint}
 	p.Table = im.Table
 	p.Table.Parts = nil
+	apps, prepared := canPrepare(im)
+	prepared = prepared && mode == "install"
+	if opts.Guest != nil && !prepared {
+		return nil, errors.New("dArkOSen can only be put on the card with a fresh installation of a release that supports it")
+	}
 	for _, q := range im.Table.Parts {
-		// an update keeps the card's userdata where the image has AUTOAPK
-		if mode == "update" && q.Name == AutoAPK {
+		// an update keeps the card's userdata where the image has AUTOAPK; a prepared
+		// card gets the apps behind userdata
+		if (mode == "update" || prepared) && q.Name == AutoAPK {
 			continue
 		}
 		p.Table.Parts = append(p.Table.Parts, q)
@@ -259,10 +277,16 @@ func Build(im *firmware.Image, card Card, size int64, mode, profile string, noRO
 		}
 		// Automatic on a small card is fine: the resizer gives Android the whole card.
 		// A size the user chose must leave the games partition they expect.
-		if _, roms := UserdataLayout(size, userdataGiB, noROMs); !noROMs && userdataGiB > 0 && roms == 0 {
-			return nil, errors.New("this card has no room for a separate games partition with that much Android storage; choose less, or all storage for Android")
+		if prepared {
+			if e := p.prepare(im, apps, userdataGiB, noROMs, opts.Guest); e != nil {
+				return nil, e
+			}
+		} else {
+			if _, roms := UserdataLayout(size, userdataGiB, noROMs); !noROMs && userdataGiB > 0 && roms == 0 {
+				return nil, errors.New("this card has no room for a separate games partition with that much Android storage; choose less, or all storage for Android")
+			}
+			p.Writes = append(p.Writes, Write{Range: Range{"Release image", 34 * 512, im.Size - 67*512}, SourceOffset: 34 * 512})
 		}
-		p.Writes = append(p.Writes, Write{Range: Range{"Release image", 34 * 512, im.Size - 67*512}, SourceOffset: 34 * 512})
 	} else {
 		if !card.Installed {
 			return nil, fmt.Errorf("cannot update this card: %s", card.Reason)
@@ -350,7 +374,7 @@ func (p *Plan) UseSystemImage(path string) error {
 	var out []Write
 	for _, w := range p.Writes {
 		switch {
-		case w.Data != nil || w.Boot || w.End() <= sys.Offset || w.Offset >= sys.End():
+		case w.Data != nil || w.Boot || w.Zero || w.Guest || w.End() <= sys.Offset || w.Offset >= sys.End():
 			out = append(out, w)
 		case w.Offset == sys.Offset && w.Length == sys.Length:
 			out = append(out, sys)

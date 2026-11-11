@@ -90,7 +90,7 @@ func measureLatency(ctx context.Context, dst Device, p *Plan) (*CardSpeed, error
 	}
 	var target *Write
 	for i, w := range p.Writes {
-		if w.Data == nil && !w.Boot && (target == nil || w.Length > target.Length) {
+		if w.Data == nil && !w.Boot && !w.Zero && !w.Guest && (target == nil || w.Length > target.Length) {
 			target = &p.Writes[i]
 		}
 	}

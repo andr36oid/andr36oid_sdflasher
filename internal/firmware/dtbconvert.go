@@ -19,6 +19,11 @@ type BootOptions struct {
 	UserdataGiB int
 	// Keep are files from the card's old BOOT written again on an update (KeptFiles).
 	Keep map[string][]byte
+	// Prepared: the flasher partitions the card itself (flash.Plan.Prepared), so nothing
+	// is left for the first-boot resizer and it gets no size wish.
+	Prepared bool
+	// Files are written to the top of BOOT as they are (flash.Plan.BootFiles).
+	Files map[string][]byte
 }
 
 // BackupDir is the BOOT folder that keeps the user's original DTB, the

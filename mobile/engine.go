@@ -329,7 +329,11 @@ func (s *Session) Write(d Disk, input string, observer Observer) (string, error)
 			return "", e
 		}
 	}
-	boot, e := firmware.PrepareBoot(s.image, opts.Profile, p.NoROMs, opts.Mode == "update", opts.Custom, dir, firmware.BootOptions{ConvertDTB: opts.ConvertDTB, UserdataGiB: p.UserdataGiB, Keep: p.Keep})
+	files, e := p.BootFiles()
+	if e != nil {
+		return "", e
+	}
+	boot, e := firmware.PrepareBoot(s.image, opts.Profile, p.NoROMs, opts.Mode == "update", opts.Custom, dir, firmware.BootOptions{ConvertDTB: opts.ConvertDTB, UserdataGiB: p.UserdataGiB, Keep: p.Keep, Prepared: p.Prepared, Files: files})
 	if e != nil {
 		return "", e
 	}
