@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -277,6 +278,39 @@ func validDTB(b []byte) bool {
 	return reserve >= 40 && reserve+16 <= total
 }
 
+// PictureFiles are the boot logo and charge screens U-Boot reads from the top of BOOT.
+var PictureFiles = []string{"logo.bmp", "logo_kernel.bmp", "battery_0.bmp", "battery_1.bmp", "battery_2.bmp", "battery_3.bmp", "battery_fail.bmp"}
+
+var pictureSet = regexp.MustCompile(`^[0-9]{2,5}x[0-9]{2,5}(-[a-z0-9][a-z0-9-]{0,47})?$`)
+
+// profilePictures returns the pictures of a profile whose folder only names their
+// set (pictures.txt, one line such as 640x480): all seven from Pictures/<set>. A
+// release that keeps its pictures this way must name a complete set for every
+// profile; another panel's pictures are never used instead. Older releases have the
+// pictures in the profile folder and no pictures.txt.
+func profilePictures(fs filesystem.FileSystem, dir string, required bool) ([]string, error) {
+	b, e := ReadFile(fs, path.Join(dir, "pictures.txt"), 256)
+	if e != nil {
+		if required {
+			return nil, fmt.Errorf("profile %s names no pictures", strings.TrimPrefix(dir, "/"))
+		}
+		return nil, nil
+	}
+	set := strings.TrimSpace(string(b))
+	if !pictureSet.MatchString(set) {
+		return nil, fmt.Errorf("profile %s names an invalid picture set", strings.TrimPrefix(dir, "/"))
+	}
+	var files []string
+	for _, n := range PictureFiles {
+		f := path.Join("/Pictures", set, n)
+		if _, e := ReadFile(fs, f, 16<<20); e != nil {
+			return nil, fmt.Errorf("picture set %s is incomplete: %s", set, n)
+		}
+		files = append(files, f)
+	}
+	return files, nil
+}
+
 func Profiles(fs filesystem.FileSystem) ([]Profile, error) {
 	var result []Profile
 	b, e := ReadFile(fs, "/"+ProfileList, 1<<20)
@@ -284,6 +318,9 @@ func Profiles(fs filesystem.FileSystem) ([]Profile, error) {
 		return nil, ErrNoProfileList
 	}
 	known := parseProfileList(b)
+	// from the hybrid release on (format 2) the pictures are kept once per screen size
+	_, e = ReadFile(fs, "/"+BuildInfoV2File, 64<<10)
+	shares := e == nil
 	var walk func(string, int) error
 	walk = func(dir string, depth int) error {
 		if depth > 4 {
@@ -320,6 +357,11 @@ func Profiles(fs filesystem.FileSystem) ([]Profile, error) {
 			if e != nil || !validDTB(b) {
 				return fmt.Errorf("invalid shipped DTB: %s", kernel)
 			}
+			shared, e := profilePictures(fs, dir, shares)
+			if e != nil {
+				return e
+			}
+			files = append(files, shared...)
 			hasBoot := false
 			for _, n := range files {
 				if strings.HasSuffix(n, ".dtb") {

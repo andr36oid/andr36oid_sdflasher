@@ -180,3 +180,54 @@ func TestProfilesNeedTheImagesList(t *testing.T) {
 		t.Fatalf("Profiles without the list: %v", e)
 	}
 }
+
+// From the hybrid release on a profile folder names its picture set and the seven
+// pictures come from Pictures/<set>; a missing name or picture is an error.
+func TestProfilesTakeSharedPictures(t *testing.T) {
+	b := dtbconv.EmbeddedBases()
+	base := map[string]string{
+		BuildInfoV2File:                         strings.Replace(testBuildInfo, "format=1", "format=2", 1),
+		ProfileList:                             "Panels/Panel4|R36S|R36S — Panel 4|\n",
+		"Panels/Panel4/rk3326-r36s-android.dtb": string(b.Genuine),
+		"Panels/Panel4/rg351mp-kernel.dtb":      string(b.UBoot),
+		"Panels/Panel4/pictures.txt":            "640x480\r\n",
+	}
+	for _, n := range PictureFiles {
+		base["Pictures/640x480/"+n] = "BM" + n
+	}
+	with := func(change func(map[string]string)) ([]Profile, error) {
+		files := map[string]string{}
+		for k, v := range base {
+			files[k] = v
+		}
+		change(files)
+		f, tab := bootOnlyImage(t, files)
+		boot, e := OpenBoot(f, tab, true)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return Profiles(boot)
+	}
+	profiles, e := with(func(map[string]string) {})
+	if e != nil || len(profiles) != 1 {
+		t.Fatal(profiles, e)
+	}
+	got := map[string]bool{}
+	for _, n := range profiles[0].BootFiles {
+		got[n] = true
+	}
+	for _, n := range PictureFiles {
+		if !got["/Pictures/640x480/"+n] {
+			t.Fatalf("%s is not taken from the shared set: %v", n, profiles[0].BootFiles)
+		}
+	}
+	for name, change := range map[string]func(map[string]string){
+		"no set named":   func(m map[string]string) { delete(m, "Panels/Panel4/pictures.txt") },
+		"path as a name": func(m map[string]string) { m["Panels/Panel4/pictures.txt"] = "../Panels\n" },
+		"picture gone":   func(m map[string]string) { delete(m, "Pictures/640x480/battery_fail.bmp") },
+	} {
+		if _, e := with(change); e == nil {
+			t.Fatalf("%s: accepted", name)
+		}
+	}
+}

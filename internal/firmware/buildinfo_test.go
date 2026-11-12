@@ -56,6 +56,11 @@ func bootOnlyImage(t *testing.T, files map[string]string) (*os.File, layout.Tabl
 		t.Fatal(e)
 	}
 	for n, d := range files {
+		for i, c := range n {
+			if c == '/' {
+				fs.Mkdir(n[:i]) // an error only says an earlier file made it
+			}
+		}
 		w, e := fs.OpenFile(n, os.O_CREATE|os.O_RDWR)
 		if e != nil {
 			t.Fatal(e)
