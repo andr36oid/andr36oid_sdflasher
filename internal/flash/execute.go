@@ -150,6 +150,9 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 	if e := p.Validate(); e != nil {
 		return e
 	}
+	if e := checkCompressedUserdata(dst, p, im.Facts["f2fs_compression"]); e != nil {
+		return e
+	}
 	dst = &guardedDevice{Device: dst, plan: p}
 	src, e := os.Open(im.Path)
 	if e != nil {

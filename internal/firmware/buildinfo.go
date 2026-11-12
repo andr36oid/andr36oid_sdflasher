@@ -65,7 +65,7 @@ func ParseBuildInfo(b []byte) (map[string]string, bool) {
 }
 
 // FactKeys are the lines of andr36oid-build.txt kept in Image.Facts.
-var FactKeys = []string{"layout", "subsystem", "kernel_line", "gpu_variant"}
+var FactKeys = []string{"layout", "subsystem", "kernel_line", "gpu_variant", "f2fs_compression"}
 
 // ErrNoBuildInfo is an image without andr36oid-build.txt on BOOT: made before
 // 2026-10-18, or not an andr36oid release at all. This flasher doesn't read the system and
