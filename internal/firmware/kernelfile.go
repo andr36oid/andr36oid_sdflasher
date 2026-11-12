@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
+	"os"
 
 	"github.com/diskfs/go-diskfs/filesystem"
 )
@@ -27,7 +28,12 @@ const (
 func checkKernel(boot filesystem.FileSystem) error {
 	meta, e := ReadFile(boot, "/"+KernelMetaFile, 4096)
 	if e != nil {
-		if _, e := ReadFile(boot, "/"+KernelGzipFile, 1); e == nil {
+		// Half a compressed pair is a broken image even when a plain Image sits
+		// beside it: the boot script would try the pair first.
+		if onBoot(boot, "/"+KernelMetaFile) {
+			return errors.New("invalid Image.gz.meta")
+		}
+		if onBoot(boot, "/"+KernelGzipFile) {
 			return errors.New("Image.gz without Image.gz.meta")
 		}
 		if b, e := ReadFile(boot, "/"+KernelImageFile, 128<<20); e != nil || len(b) < 4096 {
@@ -53,4 +59,14 @@ func checkKernel(boot filesystem.FileSystem) error {
 		return errors.New("Image.gz does not match Image.gz.meta")
 	}
 	return nil
+}
+
+// onBoot says whether a file exists, whatever its size.
+func onBoot(boot filesystem.FileSystem, path string) bool {
+	f, e := boot.OpenFile(path, os.O_RDONLY)
+	if e != nil {
+		return false
+	}
+	f.Close()
+	return true
 }

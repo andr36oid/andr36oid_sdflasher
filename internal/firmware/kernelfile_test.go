@@ -50,6 +50,8 @@ func TestCheckKernel(t *testing.T) {
 		"short raw kernel":  {map[string]string{"Image": "x"}, false},
 		"no meta":           {map[string]string{"Image.gz": string(gz)}, false},
 		"meta alone":        {map[string]string{"Image.gz.meta": string(meta)}, false},
+		"no meta, raw too":  {map[string]string{"Image.gz": string(gz), "Image": raw}, false},
+		"big meta, raw too": {map[string]string{"Image.gz.meta": string(bytes.Repeat([]byte("m"), 8192)), "Image": raw}, false},
 		"cut short":         {map[string]string{"Image.gz": string(cut), "Image.gz.meta": string(meta)}, false},
 		"changed byte":      {map[string]string{"Image.gz": string(flipped), "Image.gz.meta": string(meta)}, false},
 		"changed meta":      {map[string]string{"Image.gz": string(gz), "Image.gz.meta": string(badMeta)}, false},
