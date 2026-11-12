@@ -20,7 +20,7 @@ import (
 // (its workflow converts each dArkOSen release and verifies every file). A full
 // release there says the image works with andr36oid; pre-releases are still being
 // tested and are never offered.
-const GuestRepository = "andr36oid/dArkOSen-R36S"
+const GuestRepository = "andr36oid/dArkOSen-erofs"
 
 const guestManifest = "manifest.json"
 
