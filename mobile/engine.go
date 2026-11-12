@@ -91,6 +91,11 @@ type Session struct {
 	hotfixOffer    *firmware.HotfixOffer
 	hotfixIdentity string
 	hotfixURL      string // empty uses the published index
+	// guest is the dArkOSen release offered for image, guestPath its unpacked
+	// image once DownloadGuest fetched it; both go with the loaded release.
+	guest     *catalog.GuestRelease
+	guestFor  string
+	guestPath string
 	// cancel stops the write in progress; guarded by cancelMu, not mu, so the
 	// app can call Cancel while Write holds mu.
 	cancelMu sync.Mutex
@@ -199,6 +204,92 @@ type options struct {
 	ConvertDTB     bool   `json:"convert_dtb"`
 	System         string `json:"system"`
 	SystemAccepted bool   `json:"system_accepted"`
+	// Guest puts the dArkOSen release of GuestOffer on a new card, in its own
+	// partition. DownloadGuest must have fetched it.
+	Guest bool `json:"guest"`
+}
+
+type guestOffer struct {
+	Darkosen       string `json:"darkosen"`
+	DownloadBytes  int64  `json:"download_bytes"`
+	PartitionBytes int64  `json:"partition_bytes"`
+	Downloaded     bool   `json:"downloaded"`
+}
+
+// offer is the dArkOSen release that fits the loaded release, nil for none. It
+// forgets the one looked up or downloaded for another release.
+func (s *Session) offer() *catalog.GuestRelease {
+	if s.image == nil || s.guestFor != s.image.SHA256 {
+		s.guest, s.guestPath = nil, ""
+		return nil
+	}
+	return s.guest
+}
+
+// GuestOffer says which dArkOSen release can go on a new card with the loaded
+// release, as JSON, or "" when there is none: an older Android release, or none
+// published that this one can run. The app shows the choice only then.
+func (s *Session) GuestOffer() (string, error) {
+	s.mu.Lock()
+	im := s.image
+	s.mu.Unlock()
+	if im == nil || !im.Subsystem() {
+		return "", nil
+	}
+	g, e := catalog.LatestGuest(context.Background())
+	if e != nil {
+		return "", e
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.image != im || g == nil || flash.GuestFits(im, &flash.Guest{Minimum: g.Minimum}) != nil {
+		return "", nil
+	}
+	if s.guestFor != im.SHA256 || s.guest == nil || s.guest.Image.SHA256 != g.Image.SHA256 {
+		s.guest, s.guestFor, s.guestPath = g, im.SHA256, ""
+	}
+	return encode(guestOffer{g.Darkosen, g.DownloadBytes(), g.PartitionBytes, s.guestPath != ""})
+}
+
+// DownloadGuest fetches and unpacks the dArkOSen release of GuestOffer; the
+// events are "downloading" and then "unpack". Write with "guest" needs it.
+func (s *Session) DownloadGuest(observer Observer) error {
+	s.mu.Lock()
+	g, im := s.offer(), s.image
+	s.mu.Unlock()
+	if g == nil {
+		return errors.New("no dArkOSen release for this Android release")
+	}
+	path, e := catalog.DownloadGuest(context.Background(), g, s.dir, func(phase string, done, total int64) {
+		if phase != "unpack" {
+			phase = "downloading"
+		}
+		progress(observer, phase)(done, total)
+	})
+	if e != nil {
+		return e
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.image == im && s.guest == g {
+		s.guestPath = path
+	}
+	return nil
+}
+
+// guestChoice is the dArkOSen image for a plan that asks for one.
+func (s *Session) guestChoice(opts options) (*flash.Guest, error) {
+	if !opts.Guest {
+		return nil, nil
+	}
+	g := s.offer()
+	if g == nil || s.guestPath == "" {
+		return nil, errors.New("download dArkOSen first")
+	}
+	if opts.Mode != "install" {
+		return nil, errors.New("dArkOSen only goes on a newly written card")
+	}
+	return &flash.Guest{Path: s.guestPath, Darkosen: g.Darkosen, Revision: g.Revision, Minimum: g.Minimum, Name: g.Image.Name, Size: g.Image.Size, SHA256: g.Image.SHA256, PartitionBytes: g.PartitionBytes}, nil
 }
 
 func (s *Session) plan(d *usbDisk, input string) (*flash.Plan, options, error) {
@@ -234,7 +325,11 @@ func (s *Session) plan(d *usbDisk, input string) (*flash.Plan, options, error) {
 	if opts.System != "" && !opts.SystemAccepted {
 		return nil, opts, errors.New(firmware.GSIWarning)
 	}
-	p, e := flash.Build(s.image, card, d.size, opts.Mode, opts.Profile, opts.NoROMs, opts.UserdataGiB)
+	guest, e := s.guestChoice(opts)
+	if e != nil {
+		return nil, opts, e
+	}
+	p, e := flash.BuildWith(s.image, card, d.size, opts.Mode, opts.Profile, opts.NoROMs, opts.UserdataGiB, flash.Options{Guest: guest})
 	return p, opts, e
 }
 func (s *Session) Plan(d Disk, input string) (string, error) {

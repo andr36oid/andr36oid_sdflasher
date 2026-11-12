@@ -2,6 +2,7 @@ package mobile
 
 import (
 	"errors"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
 	"io"
@@ -167,5 +168,31 @@ func TestCancelReachesOnlyTheArmedWrite(t *testing.T) {
 	s.Cancel() // disarmed again: no-op
 	if !strings.HasPrefix(Stopped+"\nRecovery: /x", Stopped) {
 		t.Fatal("app matches the stopped error by prefix")
+	}
+}
+
+// A plan only gets dArkOSen when the release offered for the loaded image was
+// downloaded, and only for a newly written card; another image forgets it.
+func TestGuestChoice(t *testing.T) {
+	g := &catalog.GuestRelease{Darkosen: "11112026", Revision: 1, PartitionBytes: 4 << 30}
+	g.Image.Name, g.Image.Size, g.Image.SHA256 = "darkosen.erofs.img", 1<<20, strings.Repeat("a", 64)
+	s := &Session{image: &firmware.Image{SHA256: "one"}, guest: g, guestFor: "one"}
+	if got, e := s.guestChoice(options{Mode: "install"}); got != nil || e != nil {
+		t.Fatal("dArkOSen without being asked", got, e)
+	}
+	if _, e := s.guestChoice(options{Mode: "install", Guest: true}); e == nil {
+		t.Fatal("accepted before the download")
+	}
+	s.guestPath = "/tmp/darkosen.erofs.img"
+	if _, e := s.guestChoice(options{Mode: "update", Guest: true}); e == nil {
+		t.Fatal("accepted for an update")
+	}
+	got, e := s.guestChoice(options{Mode: "install", Guest: true})
+	if e != nil || got.Path != s.guestPath || got.SHA256 != g.Image.SHA256 || got.PartitionBytes != g.PartitionBytes {
+		t.Fatal(got, e)
+	}
+	s.image = &firmware.Image{SHA256: "two"}
+	if _, e := s.guestChoice(options{Mode: "install", Guest: true}); e == nil || s.guest != nil || s.guestPath != "" {
+		t.Fatal("kept the download of another release")
 	}
 }
