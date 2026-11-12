@@ -279,20 +279,32 @@ func (s *Session) DownloadGuest(observer Observer) error {
 
 // guestChoice is the dArkOSen image for a plan that asks for one.
 func (s *Session) guestChoice(opts options) (*flash.Guest, error) {
+	return s.guestForOptions(opts, false)
+}
+
+// A preview describes the partition before the erase confirmation/download.
+// Write always rebuilds its plan with preview=false and the verified download.
+func (s *Session) guestForOptions(opts options, preview bool) (*flash.Guest, error) {
 	if !opts.Guest {
 		return nil, nil
 	}
 	g := s.offer()
-	if g == nil || s.guestPath == "" {
+	if g == nil || (s.guestPath == "" && !preview) {
 		return nil, errors.New("download dArkOSen first")
 	}
 	if opts.Mode != "install" {
 		return nil, errors.New("dArkOSen only goes on a newly written card")
 	}
-	return &flash.Guest{Path: s.guestPath, Darkosen: g.Darkosen, Revision: g.Revision, Minimum: g.Minimum, Name: g.Image.Name, Size: g.Image.Size, SHA256: g.Image.SHA256, PartitionBytes: g.PartitionBytes}, nil
+	path := s.guestPath
+	if path == "" {
+		// Metadata only: Plan never opens this path. It is not saved in the
+		// session and cannot satisfy Write's strict download requirement.
+		path = filepath.Join(s.dir, "guest-preview")
+	}
+	return &flash.Guest{Path: path, Darkosen: g.Darkosen, Revision: g.Revision, Minimum: g.Minimum, Name: g.Image.Name, Size: g.Image.Size, SHA256: g.Image.SHA256, PartitionBytes: g.PartitionBytes}, nil
 }
 
-func (s *Session) plan(d *usbDisk, input string) (*flash.Plan, options, error) {
+func (s *Session) plan(d *usbDisk, input string, preview bool) (*flash.Plan, options, error) {
 	var opts options
 	if e := json.Unmarshal([]byte(input), &opts); e != nil {
 		return nil, opts, e
@@ -325,7 +337,7 @@ func (s *Session) plan(d *usbDisk, input string) (*flash.Plan, options, error) {
 	if opts.System != "" && !opts.SystemAccepted {
 		return nil, opts, errors.New(firmware.GSIWarning)
 	}
-	guest, e := s.guestChoice(opts)
+	guest, e := s.guestForOptions(opts, preview)
 	if e != nil {
 		return nil, opts, e
 	}
@@ -339,7 +351,7 @@ func (s *Session) Plan(d Disk, input string) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	p, _, e := s.plan(dev, input)
+	p, _, e := s.plan(dev, input, true)
 	if e != nil {
 		return "", e
 	}
@@ -368,7 +380,7 @@ func (s *Session) Write(d Disk, input string, observer Observer) (string, error)
 	if e != nil {
 		return "", e
 	}
-	p, opts, e := s.plan(dev, input)
+	p, opts, e := s.plan(dev, input, false)
 	if e != nil {
 		return "", e
 	}
@@ -517,6 +529,33 @@ func StorageLayout(size int64, wantGiB int) string {
 	android, games := flash.UserdataLayout(size, wantGiB, false)
 	b, _ := json.Marshal(map[string]int{"android": flash.RoundGiB(android), "games": flash.RoundGiB(games), "max": flash.MaxUserdataGiB(size), "min": flash.MinUserdataGiB})
 	return string(b)
+}
+
+// StorageLayoutForImage uses the same prepared-card arithmetic as the writer.
+// It consumes the immutable Load JSON rather than locking a Session which may
+// be writing a card; UI rendering must never wait for that operation's mutex.
+func StorageLayoutForImage(image string, size int64, wantGiB int, noROMs bool, guestBytes int64) (string, error) {
+	var im firmware.Image
+	if err := json.Unmarshal([]byte(image), &im); err != nil {
+		return "", err
+	}
+	if guestBytes < 0 || (guestBytes > 0 && !im.Subsystem()) {
+		return "", errors.New("this release cannot run dArkOSen from its own partition")
+	}
+	android, games, prepared, err := flash.PreparedSizes(&im, size, wantGiB, noROMs, guestBytes)
+	if err != nil {
+		return "", err
+	}
+	max := flash.MaxUserdataGiB(size)
+	if prepared {
+		max = flash.MaxPreparedGiB(&im, size, guestBytes)
+	} else {
+		if guestBytes > 0 {
+			return "", errors.New("this release cannot prepare a dArkOSen partition")
+		}
+		android, games = flash.UserdataLayout(size, wantGiB, noROMs)
+	}
+	return encode(map[string]int{"android": flash.RoundGiB(android), "games": flash.RoundGiB(games), "max": max, "min": flash.MinUserdataGiB})
 }
 
 type conversion struct {

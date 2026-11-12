@@ -18,6 +18,9 @@ final class WorkState {
   static volatile JSONObject appUpdate;
   static boolean updateCheckStarted, updateShown;
   static volatile JSONObject image, card, progress, plan, speed;
+  static volatile JSONObject guestOffer;
+  static volatile boolean guest;
+  private static JSONObject guestLookupImage;
   static volatile JSONObject hotfixOffer;
   static volatile org.json.JSONArray hotfixResults;
   static volatile String hotfixMessage = "";
@@ -71,6 +74,9 @@ final class WorkState {
 
   static void clearImage() {
     image = null;
+    guestOffer = null;
+    guest = false;
+    guestLookupImage = null;
     profile = "";
     custom = "";
     customAccepted = false;
@@ -92,6 +98,61 @@ final class WorkState {
           profile = preferred;
           return;
         }
+  }
+
+  // Optional catalog lookup, once per loaded image, like the desktop flasher.
+  // It neither blocks the UI nor turns a network failure into an image failure.
+  static synchronized void lookupGuestOffer() {
+    if (image == null || busy || update || guestLookupImage == image) return;
+    JSONObject expected = image;
+    guestLookupImage = expected;
+    new Thread(
+            () -> {
+              JSONObject offer = null;
+              try {
+                String value = engine.guestOffer();
+                if (!value.isEmpty()) offer = new JSONObject(value);
+              } catch (Exception ignored) {
+              }
+              if (image == expected) {
+                guestOffer = offer;
+                revision++;
+              }
+            },
+            "guest-offer")
+        .start();
+  }
+
+  static boolean guestSelected() {
+    return !update && guest && guestOffer != null;
+  }
+
+  static void prepareGuest(String input) throws Exception {
+    JSONObject options = new JSONObject(input);
+    if (!"install".equals(options.optString("mode")) || !options.optBoolean("guest")) return;
+    try {
+      engine.downloadGuest(WorkState::guestEvent);
+    } finally {
+      progress = null;
+      revision++;
+    }
+  }
+
+  static void guestEvent(String event) {
+    try {
+      JSONObject p = new JSONObject(event);
+      p.put("guest", true);
+      event(p.toString());
+    } catch (Exception ignored) {
+    }
+  }
+
+  // Download is the first half, unpack the second; other operations keep the
+  // existing whole-bar progress. The per-event marker survives a UI refresh.
+  static int progressValue(String phase, long done, long total, boolean guest) {
+    if (total <= 0) return 0;
+    double fraction = Math.max(0, Math.min(1, (double) done / total));
+    return (int) (guest ? ("unpack".equals(phase) ? 500 : 0) + 500 * fraction : 1000 * fraction);
   }
 
   static synchronized void checkAppUpdate() {
@@ -168,6 +229,7 @@ final class WorkState {
         .put("mode", update ? "update" : "install")
         .put("profile", profile)
         .put("no_roms", noROMs)
+        .put("guest", guestSelected())
         .put("userdata_gib", update || noROMs ? 0 : userdataGiB)
         .put("custom", custom)
         .put("custom_accepted", customAccepted)

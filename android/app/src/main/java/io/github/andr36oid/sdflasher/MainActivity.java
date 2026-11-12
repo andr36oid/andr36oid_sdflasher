@@ -37,7 +37,9 @@ public final class MainActivity extends Activity {
   private TextView imageLabel, cardLabel, status, customLabel, mapLegend, usbNotice;
   private Button language, console, profile, chooseCard, action, stop;
   private final List<View> controls = new ArrayList<>();
-  private CheckBox noROMs;
+  private CheckBox noROMs, guest;
+  private TextView guestInfo;
+  private LinearLayout guestBox;
   private RadioButton install, update;
   private ProgressBar progress;
   private DiskMap map;
@@ -403,6 +405,7 @@ public final class MainActivity extends Activity {
     modes.setOnCheckedChangeListener(
         (g, id) -> {
           WorkState.update = id == update.getId();
+          if (WorkState.update) WorkState.guest = false;
           if (WorkState.update && WorkState.card != null)
             WorkState.noROMs = WorkState.card.optBoolean("no_roms");
           WorkState.revision++;
@@ -451,6 +454,19 @@ public final class MainActivity extends Activity {
           WorkState.revision++;
         });
     storage.addView(sizeAuto);
+    guestBox = new LinearLayout(this);
+    guestBox.setOrientation(LinearLayout.VERTICAL);
+    guest = new CheckBox(this);
+    guestBox.addView(guest);
+    guestInfo = new TextView(this);
+    guestInfo.setTextColor(getColor(R.color.body_text));
+    guestBox.addView(guestInfo);
+    target.addView(guestBox);
+    guest.setOnCheckedChangeListener(
+        (b, checked) -> {
+          WorkState.guest = checked;
+          WorkState.revision++;
+        });
     systemLabel = label("", false);
     button(
         "Advanced: different system image (GSI)",
@@ -633,6 +649,7 @@ public final class MainActivity extends Activity {
     }
     noROMs.setChecked(WorkState.noROMs);
     noROMs.setEnabled(!busy && !WorkState.update);
+    renderGuest(busy);
     renderStorage(busy);
     systemLabel.setText(systemText());
     boolean ready = true;
@@ -709,11 +726,15 @@ public final class MainActivity extends Activity {
                 : t(busy ? (phase.isEmpty() ? "Working…" : phase) : WorkState.message)
                     + (busy && p != null && p.has("name") ? ": " + t(p.optString("name")) : ""));
     status.setTextColor(
-        busy && stall > 0 ? android.graphics.Color.rgb(0xE5, 0x39, 0x35) : getColor(R.color.body_text));
+        busy && stall > 0
+            ? android.graphics.Color.rgb(0xE5, 0x39, 0x35)
+            : getColor(R.color.body_text));
     stop.setVisibility(busy && WorkState.cancelable ? View.VISIBLE : View.GONE);
     progress.setIndeterminate(busy && (p == null || p.optLong("total") == 0));
     if (p != null && p.optLong("total") > 0)
-      progress.setProgress((int) (1000.0 * p.optLong("done") / p.optLong("total")));
+      progress.setProgress(
+          WorkState.progressValue(
+              phase, p.optLong("done"), p.optLong("total"), p.optBoolean("guest")));
     progress.setVisibility(busy || p != null ? View.VISIBLE : View.GONE);
     status.setVisibility(status.getText().length() > 0 ? View.VISIBLE : View.GONE);
     map.setVisibility(WorkState.plan != null ? View.VISIBLE : View.GONE);
@@ -1352,6 +1373,7 @@ public final class MainActivity extends Activity {
                   app,
                   true,
                   () -> {
+                    WorkState.prepareGuest(input);
                     try (UsbCard.Connection disk = target.open(app)) {
                       WorkState.speed = null;
                       WorkState.cancelable = true;
@@ -1603,10 +1625,64 @@ public final class MainActivity extends Activity {
   private JSONObject storageLayout() {
     if (WorkState.selected == null) return null;
     try {
-      return new JSONObject(Mobile.storageLayout(WorkState.selected.bytes, WorkState.userdataGiB));
-    } catch (JSONException e) {
+      if (WorkState.image == null)
+        return new JSONObject(
+            Mobile.storageLayout(WorkState.selected.bytes, WorkState.userdataGiB));
+      long guestBytes =
+          WorkState.guestSelected() ? WorkState.guestOffer.optLong("partition_bytes") : 0;
+      return new JSONObject(
+          Mobile.storageLayoutForImage(
+              WorkState.image.toString(),
+              WorkState.selected.bytes,
+              WorkState.userdataGiB,
+              WorkState.noROMs,
+              guestBytes));
+    } catch (Exception e) {
       return null;
     }
+  }
+
+  private static String humanBytes(long n) {
+    if (n >= 1L << 30)
+      return String.format(Locale.getDefault(), "%.1f GiB", (double) n / (1L << 30));
+    if (n >= 1L << 20)
+      return String.format(Locale.getDefault(), "%.1f MiB", (double) n / (1L << 20));
+    if (n >= 1L << 10)
+      return String.format(Locale.getDefault(), "%.0f KiB", (double) n / (1L << 10));
+    return String.format(Locale.getDefault(), "%d B", n);
+  }
+
+  private void renderGuest(boolean busy) {
+    WorkState.lookupGuestOffer();
+    JSONObject offer = WorkState.guestOffer;
+    boolean show = !WorkState.update && offer != null;
+    guestBox.setVisibility(show ? View.VISIBLE : View.GONE);
+    if (!show) return;
+    boolean fits = true;
+    if (WorkState.selected != null && WorkState.image != null) {
+      try {
+        Mobile.storageLayoutForImage(
+            WorkState.image.toString(),
+            WorkState.selected.bytes,
+            WorkState.userdataGiB,
+            WorkState.noROMs,
+            offer.optLong("partition_bytes"));
+      } catch (Exception e) {
+        fits = false;
+      }
+    }
+    if (!fits) WorkState.guest = false;
+    guest.setText(t("Put dArkOSen %s on the card", offer.optString("darkosen")));
+    guest.setChecked(WorkState.guest);
+    guest.setEnabled(!busy && fits);
+    guestInfo.setText(
+        fits
+            ? t(
+                "Download %s. It gets %s of its own at the end of the card and is ready on the"
+                    + " console's first start.",
+                humanBytes(offer.optLong("download_bytes")),
+                humanBytes(offer.optLong("partition_bytes")))
+            : t("This card is too small for Android and dArkOSen together."));
   }
 
   private String systemText() {
