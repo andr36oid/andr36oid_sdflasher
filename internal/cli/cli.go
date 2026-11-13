@@ -151,12 +151,13 @@ func run(version string, args []string, intro func()) (code int) {
 
 	fs := flag.NewFlagSet(exeName()+" -cli", flag.ContinueOnError)
 	var (
+		undoDTBs     = fs.Bool("undo", false, "put the previous device-tree set back; use with -action dtbs")
 		acceptScreen = fs.Bool("accept-screen-change", false, "I will watch the screen at the first start")
 		dtbs         = fs.String("dtbs", "", "optional device tree pack for a fresh flash")
 		replaceDTBs  = fs.Bool("replace-anyway", false, "replace hand-edited root DTBs after keeping a copy")
 		loader       = fs.String("bootloader", "", "image, standard or new; optional bootloader choice")
 		loaderFile   = fs.String("bootloader-file", "", "local Rockchip uboot.img; checked before writing")
-		action       = fs.String("action", "", `what to do: "flash" (default), "hotfix", "kernel", "bootloader", "restore" or "list"`)
+		action       = fs.String("action", "", `what to do: "flash" (default), "hotfix", "kernel", "bootloader", "dtbs", "restore" or "list"`)
 		imagePath    = fs.String("image", "", "path to a release image (.img, .img.xz, .img.gz or .img.zip); flash action")
 		download     = fs.Bool("download", false, "download the release image from GitHub instead of a local file; flash action")
 		all          = fs.Bool("all", false, "also list fixed disks (advanced, dangerous)")
@@ -177,6 +178,14 @@ func run(version string, args []string, intro func()) (code int) {
 		return 2
 	}
 
+	if *undoDTBs && strings.ToLower(strings.TrimSpace(*action)) != "dtbs" {
+		fmt.Fprintln(os.Stderr, "--undo requires -action dtbs.")
+		return 2
+	}
+	if strings.ToLower(strings.TrimSpace(*action)) == "dtbs" && (!*undoDTBs || len(fs.Args()) != 0) {
+		fmt.Fprintln(os.Stderr, "Usage: -cli -action dtbs --undo -drive <card>")
+		return 2
+	}
 	intro()
 
 	if len(fs.Args()) > 1 && fs.Args()[0] == "dtbs" && fs.Args()[1] == "info" {
@@ -239,10 +248,12 @@ func run(version string, args []string, intro func()) (code int) {
 		return runBootloader(o)
 	case "kernel":
 		return runKernel(o)
+	case "dtbs":
+		return runDTBUndo(o)
 	case "restore":
 		return runRestore(o)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown action %q. Use flash, hotfix, kernel, restore or list.\n", *action)
+		fmt.Fprintf(os.Stderr, "Unknown action %q. Use flash, hotfix, kernel, bootloader, dtbs, restore or list.\n", *action)
 		return 2
 	}
 }
