@@ -331,7 +331,7 @@ func (s *Session) plan(d *usbDisk, input string, preview bool) (*flash.Plan, opt
 		return nil, opts, errors.New("card changed after inspection; select it again")
 	}
 	if card.DataCard && opts.Bootloader != nil {
-		if opts.Bootloader.Choice != "" && opts.Bootloader.Choice != "image" || opts.Bootloader.File != "" {
+		if opts.Bootloader.Changed() || opts.Bootloader.File != "" {
 			return nil, opts, errors.New(firmware.BootloaderOnlySD)
 		}
 		opts.Bootloader = nil
@@ -409,7 +409,7 @@ func (s *Session) Write(d Disk, input string, observer Observer) (string, error)
 	var outcome *firmware.BootloaderOutcome
 	if opts.Bootloader != nil {
 		emit(observer, flash.Progress{Phase: "Bootloader"})
-		loader, outcome, e = firmware.ResolveBootloader(ctx, *opts.Bootloader, s.image, dir)
+		loader, outcome, e = firmware.ResolveBootOptions(ctx, *opts.Bootloader, s.image, firmware.ImageBootTarget(s.image, opts.Profile), dir)
 		if e != nil {
 			return "", e
 		}
@@ -492,7 +492,7 @@ func (s *Session) Write(d Disk, input string, observer Observer) (string, error)
 			return "", errors.New(Stopped)
 		}
 		emit(observer, flash.Progress{Phase: "Bootloader", Done: 0, Total: firmware.BootloaderSize})
-		if e = firmware.ApplyBootloader(dev, dev.size, loader, *outcome.Record, s.image.BuildIdentity, dir); e != nil {
+		if e = firmware.ApplyResolvedBootOptions(dev, dev.size, loader, outcome, s.image.BuildIdentity, dir); e != nil {
 			return "", e
 		}
 	}

@@ -36,20 +36,22 @@ type BootloaderRecord struct {
 	Time       string `json:"time"`
 }
 type CardSetup struct {
-	Format            int                `json:"format"`
-	Release           string             `json:"release"`
-	Build             string             `json:"build"`
-	Revision          int                `json:"manifest_revision"`
-	KernelLine        string             `json:"kernel_line"`
-	KernelBuild       int                `json:"kernel_build,omitempty"`
-	Profile           string             `json:"profile"`
-	Parts             map[string]string  `json:"parts,omitempty"`
-	Custom            bool               `json:"custom"`
-	Time              string             `json:"time"`
-	Source            *SetupSource       `json:"source,omitempty"`
-	History           []string           `json:"history,omitempty"`
-	Bootloader        *BootloaderRecord  `json:"bootloader,omitempty"`
-	BootloaderHistory []BootloaderRecord `json:"bootloader_history,omitempty"`
+	BootOptions        *BootOptionsRecord  `json:"boot_options,omitempty"`
+	BootOptionsHistory []BootOptionsRecord `json:"boot_options_history,omitempty"`
+	Format             int                 `json:"format"`
+	Release            string              `json:"release"`
+	Build              string              `json:"build"`
+	Revision           int                 `json:"manifest_revision"`
+	KernelLine         string              `json:"kernel_line"`
+	KernelBuild        int                 `json:"kernel_build,omitempty"`
+	Profile            string              `json:"profile"`
+	Parts              map[string]string   `json:"parts,omitempty"`
+	Custom             bool                `json:"custom"`
+	Time               string              `json:"time"`
+	Source             *SetupSource        `json:"source,omitempty"`
+	History            []string            `json:"history,omitempty"`
+	Bootloader         *BootloaderRecord   `json:"bootloader,omitempty"`
+	BootloaderHistory  []BootloaderRecord  `json:"bootloader_history,omitempty"`
 }
 
 // ReadCardSetup also works before the first setup record exists. BOOT's identity

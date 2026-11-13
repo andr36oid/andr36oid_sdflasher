@@ -12,7 +12,7 @@ func TestBootloaderRows(t *testing.T) {
 	s := &screen{locale: "en"}
 	p := s.newBootloaderPicker(firmware.BootloaderChoice{}, nil)
 	p.setTarget(true, false)
-	if p.selection() == nil || p.selection().Choice != "image" || !p.radios[1].Disabled() || !p.radios[2].Disabled() {
+	if p.selection() == nil || p.selection().Choice != "image" || p.controls[0].options[1].reason == "" || p.controls[0].options[2].reason == "" {
 		t.Fatal("default/loading state")
 	}
 	p.loaded = true
@@ -23,14 +23,19 @@ func TestBootloaderRows(t *testing.T) {
 		t.Fatal("new choice unavailable")
 	}
 	p.setTarget(false, false)
-	if !p.radios[0].Disabled() || p.radios[2].Disabled() {
+	if p.controls[0].options[0].reason == "" || p.controls[0].options[2].reason != "" {
 		t.Fatal("existing card without image")
 	}
 	p.setTarget(true, true)
-	for _, r := range p.radios {
+	for _, r := range p.controls {
 		if !r.Disabled() {
 			t.Fatal("eMMC enabled")
 		}
+	}
+	called := false
+	p.confirm(func() { called = true })
+	if !called {
+		t.Fatal("disabled boot options blocked ordinary data-card flash")
 	}
 	if p.selection() != nil {
 		t.Fatal("unsupported serialized")
@@ -38,10 +43,70 @@ func TestBootloaderRows(t *testing.T) {
 	p.failed = true
 	p.setTarget(true, false)
 	p.selectChoice("image")
-	if !p.radios[2].Disabled() || p.selection() == nil {
+	if p.controls[0].options[2].reason == "" || p.selection() == nil {
 		t.Fatal("offline fallback")
 	}
-	if p.warning.Text != loaderTestWarning {
+	if p.rows.Visible() || p.warning.Text != loaderTestWarning {
 		t.Fatal("warning wording")
+	}
+}
+
+func TestAdvancedBootResetAndNotes(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	s := &screen{locale: "en"}
+	p := s.newBootloaderPicker(firmware.BootloaderChoice{}, nil)
+	p.setTarget(true, false)
+	p.loaded = true
+	p.builds["standard"] = &firmware.BootloaderBuild{Choice: "standard"}
+	p.builds["new"] = &firmware.BootloaderBuild{Choice: "new"}
+	p.rules = append(p.rules, firmware.BootRule{Kind: "sleep", ID: "vendor", Label: "Vendor sleep firmware", WorksWith: firmware.BootWorksWith{Chains: []string{"standard"}, Storage: []string{"sd"}}, TestedOn: []string{"R36 Ultra"}, Broken: []firmware.BootBrokenPair{{Field: "bootloader", Value: "new", Reason: "Fixture broken pair"}}})
+	p.catalog = &firmware.BootCatalog{Format: 1, Entries: []firmware.BootFirmwareEntry{{BootRule: p.rules[len(p.rules)-1]}}}
+	p.target.Console = "Other"
+	p.choice = firmware.BootloaderChoice{Choice: "new", Sleep: "vendor"}
+	p.refresh()
+	broken, untested := false, false
+	for _, i := range p.issues() {
+		broken = broken || i.Level == "broken"
+		untested = untested || i.Level == "untested"
+	}
+	if !broken || !untested || p.selection() == nil {
+		t.Fatal("warnings must allow explicit confirmation")
+	}
+	p.choice.Chain = "mainline"
+	p.updateChoice("chain")
+	if p.choice.LoaderID() != "image" || p.choice.SleepID() != "image" || len(p.resetNotes) != 2 || !p.controls[0].Disabled() || !p.controls[1].Disabled() {
+		t.Fatal(p.choice, p.resetNotes)
+	}
+	if p.summary.Text == "" || p.rows.Visible() {
+		t.Fatal("nondefault summary hidden")
+	}
+	p.choice.Chain = "standard"
+	p.updateChoice("chain")
+	if p.controls[0].Disabled() || p.controls[1].Disabled() {
+		t.Fatal("rows did not recover")
+	}
+}
+
+func TestLaterBootloaderResetsRestrictedSleep(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	s := &screen{locale: "en"}
+	p := s.newBootloaderPicker(firmware.BootloaderChoice{}, nil)
+	p.setTarget(true, false)
+	p.loaded = true
+	p.builds["new"] = &firmware.BootloaderBuild{Choice: "new"}
+	p.builds["standard"] = &firmware.BootloaderBuild{Choice: "standard"}
+	r := firmware.BootRule{Kind: "sleep", ID: "limited", Label: "Limited", WorksWith: firmware.BootWorksWith{Chains: []string{"standard"}, Bootloaders: []string{"standard"}, Storage: []string{"sd"}}}
+	p.rules = append(p.rules, r)
+	p.catalog = &firmware.BootCatalog{Format: 1, Entries: []firmware.BootFirmwareEntry{{BootRule: r}}}
+	p.choice = firmware.BootloaderChoice{Choice: "standard", Sleep: "limited"}
+	p.refresh()
+	if p.controls[0].options[2].reason != "" {
+		t.Fatal("valid later choice disabled instead of resetting other row")
+	}
+	p.selectChoice("new")
+	if p.choice.SleepID() != "image" || len(p.resetNotes) != 1 {
+		t.Fatal(p.choice, p.resetNotes)
 	}
 }

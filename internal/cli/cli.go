@@ -107,23 +107,26 @@ var errNoDrives = errors.New("no removable card readers found. Insert the card a
 // opts carries the parsed flags into the action functions so each one keeps a
 // short signature.
 type opts struct {
-	in             *bufio.Reader
-	cache          string
-	imagePath      string
-	download       bool
-	all            bool
-	drive          string
-	profile        string
-	mode           string
-	recovery       string
-	noROMs         bool
-	userdataGiB    int
-	assumeYes      bool
-	bootloader     string
-	bootloaderFile string
-	replaceDTBs    bool
-	screenAccepted bool
-	dtbFile        string
+	in               *bufio.Reader
+	cache            string
+	imagePath        string
+	download         bool
+	all              bool
+	drive            string
+	profile          string
+	mode             string
+	recovery         string
+	noROMs           bool
+	userdataGiB      int
+	assumeYes        bool
+	bootloader       string
+	bootloaderFile   string
+	bootChain        string
+	sleepFirmware    string
+	forceBootOptions bool
+	replaceDTBs      bool
+	screenAccepted   bool
+	dtbFile          string
 }
 
 func run(version string, args []string, intro func()) (code int) {
@@ -151,23 +154,26 @@ func run(version string, args []string, intro func()) (code int) {
 
 	fs := flag.NewFlagSet(exeName()+" -cli", flag.ContinueOnError)
 	var (
-		undoDTBs     = fs.Bool("undo", false, "put the previous device-tree set back; use with -action dtbs")
-		acceptScreen = fs.Bool("accept-screen-change", false, "I will watch the screen at the first start")
-		dtbs         = fs.String("dtbs", "", "optional device tree pack for a fresh flash")
-		replaceDTBs  = fs.Bool("replace-anyway", false, "replace hand-edited root DTBs after keeping a copy")
-		loader       = fs.String("bootloader", "", "image, standard or new; optional bootloader choice")
-		loaderFile   = fs.String("bootloader-file", "", "local Rockchip uboot.img; checked before writing")
-		action       = fs.String("action", "", `what to do: "flash" (default), "hotfix", "kernel", "bootloader", "dtbs", "restore" or "list"`)
-		imagePath    = fs.String("image", "", "path to a release image (.img, .img.xz, .img.gz or .img.zip); flash action")
-		download     = fs.Bool("download", false, "download the release image from GitHub instead of a local file; flash action")
-		all          = fs.Bool("all", false, "also list fixed disks (advanced, dangerous)")
-		modeFlag     = fs.String("mode", "", "install or update; prompted if omitted (flash action)")
-		drive        = fs.String("drive", "", "target drive path to preselect, as shown by -action list (skips the drive menu)")
-		profile      = fs.String("profile", "", "device profile ID or name to preselect; flash action")
-		recovery     = fs.String("recovery", "", "path to the recovery.json (or its folder) from an interrupted update; restore action")
-		noROMs       = fs.Bool("no-roms", false, "use all free space for Android, with no EASYROMS games drive (install only)")
-		userdata     = fs.Int("userdata", 0, "size of the Android userdata area in GiB (0 keeps the default; install only)")
-		assumeYes    = fs.Bool("y", false, "skip confirmation prompts where safe (scripting; never for a fixed disk)")
+		undoDTBs      = fs.Bool("undo", false, "put the previous device-tree set back; use with -action dtbs")
+		acceptScreen  = fs.Bool("accept-screen-change", false, "I will watch the screen at the first start")
+		dtbs          = fs.String("dtbs", "", "optional device tree pack for a fresh flash")
+		replaceDTBs   = fs.Bool("replace-anyway", false, "replace hand-edited root DTBs after keeping a copy")
+		bootChain     = fs.String("boot-chain", "", "standard or mainline; advanced boot chain")
+		sleepFirmware = fs.String("sleep-firmware", "", "image or a sleep firmware catalogue id")
+		forceBoot     = fs.Bool("force-boot-options", false, "explicitly accept a known broken boot combination; never bypasses impossible choices")
+		loader        = fs.String("bootloader", "", "image, standard or new; optional bootloader choice")
+		loaderFile    = fs.String("bootloader-file", "", "local Rockchip uboot.img; checked before writing")
+		action        = fs.String("action", "", `what to do: "flash" (default), "hotfix", "kernel", "bootloader", "dtbs", "restore" or "list"`)
+		imagePath     = fs.String("image", "", "path to a release image (.img, .img.xz, .img.gz or .img.zip); flash action")
+		download      = fs.Bool("download", false, "download the release image from GitHub instead of a local file; flash action")
+		all           = fs.Bool("all", false, "also list fixed disks (advanced, dangerous)")
+		modeFlag      = fs.String("mode", "", "install or update; prompted if omitted (flash action)")
+		drive         = fs.String("drive", "", "target drive path to preselect, as shown by -action list (skips the drive menu)")
+		profile       = fs.String("profile", "", "device profile ID or name to preselect; flash action")
+		recovery      = fs.String("recovery", "", "path to the recovery.json (or its folder) from an interrupted update; restore action")
+		noROMs        = fs.Bool("no-roms", false, "use all free space for Android, with no EASYROMS games drive (install only)")
+		userdata      = fs.Int("userdata", 0, "size of the Android userdata area in GiB (0 keeps the default; install only)")
+		assumeYes     = fs.Bool("y", false, "skip confirmation prompts where safe (scripting; never for a fixed disk)")
 	)
 	// -cli / --cli are consumed by Requested; accept and ignore them here.
 	fs.Bool("cli", false, "run in text mode (already handled)")
@@ -222,6 +228,7 @@ func run(version string, args []string, intro func()) (code int) {
 		assumeYes:      *assumeYes,
 		bootloader:     strings.TrimSpace(*loader),
 		bootloaderFile: strings.TrimSpace(*loaderFile),
+		bootChain:      strings.TrimSpace(*bootChain), sleepFirmware: strings.TrimSpace(*sleepFirmware), forceBootOptions: *forceBoot,
 		replaceDTBs:    *replaceDTBs,
 		screenAccepted: *acceptScreen,
 		dtbFile:        strings.TrimSpace(*dtbs),
@@ -436,6 +443,16 @@ func runFlash(o opts) int {
 	if e != nil {
 		fmt.Fprintln(os.Stderr, e)
 		return 2
+	}
+	if loaderChoice != nil && !((drive.Fixed || card.DataCard) && !loaderChoice.Changed()) {
+		target := firmware.ImageBootTarget(im, profile)
+		if drive.Fixed || card.DataCard {
+			target.Storage = "emmc"
+		}
+		if e = cliCheckBootOptions(*loaderChoice, target); e != nil {
+			fmt.Fprintln(os.Stderr, e)
+			return 1
+		}
 	}
 	req := jobs.Request{
 		Action:          "write",

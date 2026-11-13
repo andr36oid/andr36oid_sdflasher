@@ -19,6 +19,9 @@ final class WorkState {
   static boolean updateCheckStarted, updateShown;
   static volatile JSONObject image, card, progress, plan, speed;
   static volatile org.json.JSONArray bootloaderOffers;
+ static volatile JSONObject bootOptionsOffer;
+ static volatile String bootChain="standard",sleepFirmware="image";
+ static volatile boolean forceBootOptions;
   static volatile boolean bootloaderLookup, bootloaderFailed, choosingBootloaderCard;
   static volatile JSONObject bootloaderInfo;
   static volatile UsbCard bootloaderTarget;
@@ -27,18 +30,28 @@ final class WorkState {
     if (bootloaderLookup) return;
     bootloaderLookup = true;
     new Thread(() -> {
-      try { bootloaderOffers = new org.json.JSONArray(engine.bootloaderOffers()); }
+      try { bootOptionsOffer=new JSONObject(engine.bootOptionsOffers());bootloaderOffers=bootOptionsOffer.optJSONArray("builds");bootloaderFailed=bootOptionsOffer.optBoolean("builds_failed"); }
       catch (Exception e) { bootloaderFailed = true; bootloaderChoice = "image"; }
       revision++;
     }, "bootloader-builds").start();
   }
   static JSONObject bootloaderOptions() throws Exception {
     JSONObject choice = new JSONObject().put("choice", bootloaderChoice);
-    if (!"image".equals(bootloaderChoice) && bootloaderOffers != null)
-      for (int n=0; n<bootloaderOffers.length(); n++) {
-        JSONObject build=bootloaderOffers.getJSONObject(n);
-        if (bootloaderChoice.equals(build.optString("choice"))) choice.put("build",build);
+    if (!"image".equals(bootloaderChoice) || !"standard".equals(bootChain)
+        || !"image".equals(sleepFirmware)) {
+      choice.put("chain", bootChain).put("sleep", sleepFirmware);
+    }
+    if (forceBootOptions) {
+      choice.put("force_boot_options", true);
+    }
+    if (!"image".equals(bootloaderChoice) && bootloaderOffers != null) {
+      for (int n = 0; n < bootloaderOffers.length(); n++) {
+        JSONObject build = bootloaderOffers.getJSONObject(n);
+        if (bootloaderChoice.equals(build.optString("choice"))) {
+          choice.put("build", build);
+        }
       }
+    }
     return choice;
   }
   static volatile boolean choosingDTBCard, dtbSourcePending,dtbMessagePending;

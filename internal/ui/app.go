@@ -337,7 +337,7 @@ func (s *screen) build() {
 	// are quiet low-importance buttons in two compact rows below a separator.
 	hotfix := widget.NewButton(s.t("Apply hotfixes"), s.chooseHotfixCard)
 	kernel := widget.NewButton(s.t("Check for kernel update"), s.chooseKernelCard)
-	loader := widget.NewButton(s.t("Bootloader"), s.chooseBootloaderCard)
+	loader := widget.NewButton(s.t("Boot options"), s.chooseBootloaderCard)
 	dtbs := widget.NewButton(s.t("Update device trees"), s.chooseDTBPackCard)
 	restore := widget.NewButton(s.t("Restore an interrupted update…"), s.recover)
 	for _, b := range []*widget.Button{hotfix, kernel, dtbs, loader, restore, s.cacheClear} {

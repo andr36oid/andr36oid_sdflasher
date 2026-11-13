@@ -488,6 +488,10 @@ func (s *screen) dtbInfo(title, message string, parent fyne.Window) {
 	d.Show()
 }
 func (s *screen) writeWithDTBWarning(p *flash.Plan) {
+	if s.bootloaderOptions != nil && !s.bootloaderOptions.accepted {
+		s.bootloaderOptions.confirm(func() { s.writeWithDTBWarning(p) })
+		return
+	}
 	if s.im != nil && s.im.DTBPack != nil && s.custom == "" {
 		for _, profile := range s.im.Profiles {
 			if profile.ID == s.profile && profile.DTBScreenChanged {

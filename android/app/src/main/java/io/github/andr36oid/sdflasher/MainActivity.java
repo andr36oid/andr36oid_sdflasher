@@ -41,10 +41,8 @@ public final class MainActivity extends Activity {
   private TextView guestInfo;
   private LinearLayout guestBox;
   private RadioButton install, update;
-  private RadioGroup bootloaderRows;
-  private final RadioButton[] bootloaderButtons = new RadioButton[3];
-  private TextView bootloaderHint,dtbLabel;
-  private boolean renderingBootloader;
+  private BootOptionsView bootOptionsView;
+ private TextView dtbLabel;
   private static final String[] BOOTLOADER_CHOICES={"image","standard","new"};
   private static final String BOOTLOADER_WARNING="Test builds are tried on few consoles. If the console no longer starts, write the card again with \"As in the image\".";
   private ProgressBar progress;
@@ -475,18 +473,7 @@ public final class MainActivity extends Activity {
           WorkState.guest = checked;
           WorkState.revision++;
         });
-    label(t("Bootloader"), true);
-    bootloaderRows = new RadioGroup(this);
-    String[] loaderTitles={"As in the image","Standard U-Boot, newest test build","New U-Boot, newest test build"};
-    for (int n=0;n<3;n++) {
-      final int index=n;
-      RadioButton row=new RadioButton(this); row.setId(View.generateViewId());
-      row.setText(t(loaderTitles[n])); bootloaderButtons[n]=row; bootloaderRows.addView(row);
-      row.setOnClickListener(v -> {if(!renderingBootloader){WorkState.bootloaderChoice=BOOTLOADER_CHOICES[index];WorkState.revision++;}});
-    }
-    target.addView(bootloaderRows);
-    bootloaderHint=label("",false);
-    label(t(BOOTLOADER_WARNING), false);
+    try{bootOptionsView=new BootOptionsView(WorkState.bootloaderOptions(),bootContext(null),c->{WorkState.bootloaderChoice=c.optString("choice","image");WorkState.bootChain=c.optString("chain","standard");WorkState.sleepFirmware=c.optString("sleep","image");WorkState.forceBootOptions=c.optBoolean("force_boot_options");WorkState.revision++;});target.addView(bootOptionsView);}catch(Exception e){showError(e.toString());}
     systemLabel = label("", false);
     button(
         "Advanced: different system image (GSI)",
@@ -537,7 +524,7 @@ public final class MainActivity extends Activity {
     target = body;
     quiet(button("Restore an interrupted update…", v -> recover()));
     quiet(button("Update device trees",v->{if(WorkState.busy)return;WorkState.choosingDTBCard=true;readers();}));
-    quiet(button("Bootloader", v -> { if(WorkState.busy)return; WorkState.choosingBootloaderCard=true; readers(); }));
+    quiet(button("Boot options", v -> { if(WorkState.busy)return; WorkState.choosingBootloaderCard=true; readers(); }));
     quiet(
         button(
             "Apply hotfixes",
@@ -1345,7 +1332,7 @@ public final class MainActivity extends Activity {
         try(UsbCard.Connection disk=target.open(app)) {
           if(!WorkState.bootloaderLookup) {
             WorkState.bootloaderLookup=true;
-            try {WorkState.bootloaderOffers=new JSONArray(WorkState.engine.bootloaderOffers());}
+            try {WorkState.bootOptionsOffer=new JSONObject(WorkState.engine.bootOptionsOffers());WorkState.bootloaderOffers=WorkState.bootOptionsOffer.optJSONArray("builds");WorkState.bootloaderFailed=WorkState.bootOptionsOffer.optBoolean("builds_failed");}
             catch(Exception e) {WorkState.bootloaderFailed=true;}
           }
           WorkState.bootloaderTarget=target;
@@ -1397,7 +1384,11 @@ public final class MainActivity extends Activity {
     }
   }
 
-  private void confirmWrite() {
+  private void confirmWrite(){
+    if(bootOptionsView==null||WorkState.card!=null&&WorkState.card.optBoolean("data_card")){confirmWriteAccepted();return;}
+    bootOptionsView.confirm(c->{try{WorkState.reviewOptions=new JSONObject(WorkState.reviewOptions).put("bootloader",c).toString();confirmWriteAccepted();}catch(Exception e){showError(e.toString());}});
+  }
+  private void confirmWriteAccepted() {
     UsbCard target = WorkState.selected;
     if (target == null) return;
     boolean updating = WorkState.update;
@@ -1847,68 +1838,141 @@ public final class MainActivity extends Activity {
         .setPositiveButton(t("OK"), null)
         .show();
   }
+  // All compatibility decisions come from the Go table, also checked by the writer.
+  private interface BootChoiceCallback {void accept(JSONObject value);}
+  private final class BootOptionsView extends LinearLayout {
+    JSONObject choice, context, evaluation=new JSONObject();
+ JSONArray resetNotes=new JSONArray();
+ String lastContext="",lastOffers="";
+    final LinearLayout rows; final Spinner[] picks=new Spinner[3];
+    final TextView[] notes=new TextView[3]; final TextView changed;
+    final BootChoiceCallback update;
+    boolean drawing,unsupported;
+    BootOptionsView(JSONObject initial,JSONObject targetContext,BootChoiceCallback callback) {
+      super(MainActivity.this);setOrientation(VERTICAL);choice=initial;context=targetContext;update=callback;
+      Button toggle=new Button(MainActivity.this);toggle.setText(t("Advanced boot options"));addView(toggle);
+      text(this,t("For consoles that don't start or don't wake up. Leave these alone otherwise."));
+      changed=text(this,""); rows=new LinearLayout(MainActivity.this);rows.setOrientation(VERTICAL);addView(rows);rows.setVisibility(GONE);
+      toggle.setOnClickListener(v->rows.setVisibility(rows.getVisibility()==GONE?VISIBLE:GONE));
+      String[] titles={"Bootloader","Sleep firmware","Boot chain"};
+      for(int n=0;n<3;n++){
+        final int row=n;text(rows,t(titles[n]));picks[n]=new Spinner(MainActivity.this);rows.addView(picks[n]);notes[n]=text(rows,"");
+        picks[n].setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+          public void onNothingSelected(AdapterView<?> p){}
+          public void onItemSelected(AdapterView<?> p,View v,int pos,long id){
+            if(drawing)return;BootMenu a=(BootMenu)p.getAdapter();if(!a.isEnabled(pos))return;
+            String field=new String[]{"choice","sleep","chain"}[row],key=a.ids.get(pos);
+            if(key.equals(choice.optString(field,row==2?"standard":"image")))return;
+            try{choice.put(field,key).remove("force_boot_options");check(new String[]{"bootloader","sleep","chain"}[row]);update.accept(choice);refresh(false);}catch(Exception e){showError(e.toString());}
+          }
+        });
+        if(n==1)text(rows,t("Runs while the console sleeps and switches it off."));
+        if(n==2)text(rows,t("\"Fully mainline\" replaces the first start-up stage too."));
+      }
+      text(rows,t("Test builds. If the console doesn't start, flash again with \"Standard\"."));
+      refresh(false);
+    }
+    TextView text(LinearLayout parent,String text){TextView v=new TextView(MainActivity.this);v.setText(text);v.setTextColor(getColor(R.color.body_text));parent.addView(v);return v;}
+    JSONObject evaluate(JSONObject c,String changed) throws Exception{
+      JSONObject r=new JSONObject().put("choice",c).put("target",context).put("changed",changed);
+      if(WorkState.bootOptionsOffer!=null)r.put("rules",WorkState.bootOptionsOffer.optJSONArray("rules"));
+      return new JSONObject(WorkState.engine.checkBootOptions(r.toString()));
+    }
+    void check(String changedRow)throws Exception{
+      evaluation=evaluate(choice,changedRow);if(!changedRow.isEmpty())resetNotes=evaluation.optJSONArray("notes");evaluation.put("notes",resetNotes);choice=evaluation.getJSONObject("choice");
+      if(!"image".equals(choice.optString("choice","image"))||!"image".equals(choice.optString("sleep","image")))choice.put("chain",choice.optString("chain","standard").isEmpty()?"standard":choice.optString("chain"));
+      // Builds are verified again by the helper. Do not keep a stale offer when reset.
+      JSONObject build=loaderBuild(choice.optString("choice","image"));choice.remove("build");if(build!=null)choice.put("build",build);
+    }
+    void refresh(boolean busy){
+      try {
+        drawing=true;String nowContext=context.toString(),nowOffers=WorkState.bootOptionsOffer==null?"":WorkState.bootOptionsOffer.toString();
+ boolean reset=!nowContext.equals(lastContext)||!nowOffers.equals(lastOffers);lastContext=nowContext;lastOffers=nowOffers;String oldChoice=choice.toString();check(reset?"target":"");if(!oldChoice.equals(choice.toString()))update.accept(choice);unsupported=!"sd".equals(context.optString("storage","sd"));
+        boolean mainline="mainline".equals(choice.optString("chain"));
+        for(int row=0;row<3;row++){
+          ArrayList<String> ids=new ArrayList<>(),labels=new ArrayList<>(),why=new ArrayList<>();
+          if(row==0){Collections.addAll(ids,"image","standard","new");Collections.addAll(labels,t("As in the image"),t("Standard U-Boot, newest test build"),t("New U-Boot, newest test build"));}
+          if(row==1){ids.add("image");labels.add(t("As in the image"));JSONObject cat=WorkState.bootOptionsOffer==null?null:WorkState.bootOptionsOffer.optJSONObject("catalog");JSONArray entries=cat==null?null:cat.optJSONArray("entries");if(entries!=null)for(int i=0;i<entries.length();i++){JSONObject e=entries.getJSONObject(i);ids.add(e.getString("id"));labels.add(t(e.getString("label_key")));}}
+          if(row==2){Collections.addAll(ids,"standard","mainline");Collections.addAll(labels,t("Standard"),t("Fully mainline"));}
+          String field=new String[]{"choice","sleep","chain"}[row], selected=choice.optString(field,row==2?"standard":"image");
+          for(String id:ids){
+            JSONObject candidate=new JSONObject(choice.toString()).put(field,id);JSONObject result=evaluate(candidate,new String[]{"bootloader","sleep","chain"}[row]);String reason="";
+            JSONArray issues=result.optJSONArray("issues");if(issues!=null)for(int i=0;i<issues.length();i++){JSONObject v=issues.getJSONObject(i);if("impossible".equals(v.optString("level"))){reason=t(v.optString("reason"));break;}}
+            if(row==0&&"image".equals(id)&&!context.optBoolean("image_available"))reason=t("Choose the image file to put its bootloader back.");
+            if((row==0&&!"image".equals(id)&&loaderBuild(id)==null)||(row==2&&"mainline".equals(id)&&loaderBuild("new")==null))reason=t("Looking for bootloader builds…");
+            why.add(reason);
+          }
+          if(row<2&&mainline){ids=new ArrayList<>(Arrays.asList("image"));labels=new ArrayList<>(Arrays.asList(t("Part of the mainline chain")));why=new ArrayList<>(Arrays.asList(t("Part of the mainline chain")));selected="image";}
+          picks[row].setAdapter(new BootMenu(ids,labels,why));picks[row].setSelection(Math.max(0,ids.indexOf(selected)),false);picks[row].setEnabled(!busy&&!unsupported&&!(row<2&&mainline));
+          StringBuilder note=new StringBuilder();boolean warning=false;
+          for(String list:new String[]{"notes","issues"}){JSONArray a=evaluation.optJSONArray(list);if(a!=null)for(int i=0;i<a.length();i++){JSONObject v=a.getJSONObject(i);if(!new String[]{"bootloader","sleep","chain"}[row].equals(v.optString("row")))continue;if(note.length()>0)note.append('\n');note.append(bootReason(v.optString("reason")));warning|="broken".equals(v.optString("level"))||"impossible".equals(v.optString("level"));}}
+          notes[row].setText(note.toString());notes[row].setTextColor(warning?DANGER:getColor(R.color.body_text));
+        }
+        ArrayList<String> parts=new ArrayList<>();String[] fields={"choice","sleep","chain"},defaults={"image","image","standard"},titles={"Bootloader","Sleep firmware","Boot chain"};
+        for(int n=0;n<3;n++){String id=choice.optString(fields[n],defaults[n]);if(!defaults[n].equals(id)){BootMenu menu=(BootMenu)picks[n].getAdapter();int at=menu.ids.indexOf(id);parts.add(t(titles[n])+": "+(at<0?id:menu.getItem(at)));}}
+        String s=android.text.TextUtils.join(", ",parts);JSONArray issues=evaluation.optJSONArray("issues");if(!s.isEmpty()&&issues!=null)for(int n=0;n<issues.length();n++){if("untested".equals(issues.getJSONObject(n).optString("level"))){s+=" "+t("(untested combination)");break;}}
+        if(!s.isEmpty())s=t("Advanced boot options changed: %s",s);changed.setText(s);changed.setVisibility(s.isEmpty()?GONE:VISIBLE);
+      }catch(Exception e){changed.setText(e.toString());}finally{drawing=false;}
+    }
+    void confirm(BootChoiceCallback action){
+      try{check("");StringBuilder bad=new StringBuilder();JSONArray a=evaluation.getJSONArray("issues");for(int i=0;i<a.length();i++){JSONObject v=a.getJSONObject(i);String level=v.getString("level");if("impossible".equals(level)){showError(bootReason(v.getString("reason")));return;}if("broken".equals(level)){if(bad.length()>0)bad.append('\n');bad.append(bootReason(v.getString("reason")));}}
+        if(bad.length()==0){action.accept(choice);return;}
+        new AlertDialog.Builder(MainActivity.this).setTitle(t("These options don't work together")).setMessage(t("%s\nThe console will probably not start or not wake up with this card.",bad.toString())).setNegativeButton(t("Go back"),null).setPositiveButton(t("Flash anyway"),(d,w)->{try{choice.put("force_boot_options",true);action.accept(choice);}catch(Exception e){showError(e.toString());}}).show();
+      }catch(Exception e){showError(e.toString());}
+    }
+  }
+  private String bootReason(String reason){if(reason.startsWith("Reset: doesn't work with "))return t("Reset: doesn't work with %s",reason.substring("Reset: doesn't work with ".length()).replace("mainline",t("Fully mainline")));if(reason.startsWith("Doesn't work with "))return t("Doesn't work with %s.",reason.substring("Doesn't work with ".length(),reason.length()-1));return t(reason);}
+  private final class BootMenu extends ArrayAdapter<String>{
+    final List<String> ids,why;
+    BootMenu(List<String> ids,List<String> labels,List<String> why){super(MainActivity.this,android.R.layout.simple_spinner_item,labels);this.ids=ids;this.why=why;setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);}
+    public boolean areAllItemsEnabled(){return false;}public boolean isEnabled(int position){return why.get(position).isEmpty();}
+    public View getDropDownView(int pos,View old,ViewGroup parent){TextView v=(TextView)super.getDropDownView(pos,old,parent);v.setEnabled(isEnabled(pos));v.setText(getItem(pos)+(isEnabled(pos)?"":" — "+why.get(pos)));return v;}
+  }
+  private JSONObject bootContext(JSONObject setup){
+    JSONObject c=new JSONObject();try{
+      c.put("storage",WorkState.card!=null&&WorkState.card.optBoolean("data_card")?"emmc":"sd").put("image_available",WorkState.image!=null);
+      JSONObject facts=WorkState.image==null?null:WorkState.image.optJSONObject("facts");c.put("kernel_line",setup!=null?setup.optString("kernel_line"):facts==null?"":facts.optString("kernel_line"));
+      String profile=setup==null?WorkState.profile:setup.optString("profile");c.put("profile",profile);
+      JSONArray ps=WorkState.image==null?null:WorkState.image.optJSONArray("profiles");if(ps!=null)for(int i=0;i<ps.length();i++){JSONObject p=ps.getJSONObject(i);if(profile.equals(p.optString("id")))c.put("console",p.optString("console"));}
+      if(setup!=null&&setup.optJSONObject("boot_options")!=null)c.put("current_chain",setup.getJSONObject("boot_options").optString("chain"));
+    }catch(Exception ignored){}return c;
+  }
+
   private JSONObject loaderBuild(String choice) {
     JSONArray builds=WorkState.bootloaderOffers;
     if(builds!=null) for(int n=0;n<builds.length();n++) {JSONObject b=builds.optJSONObject(n);if(b!=null&&choice.equals(b.optString("choice")))return b;}
     return null;
   }
+  private String bootOutcome(JSONObject out){
+    if(!out.optString("warning").isEmpty())return t(out.optString("warning"));
+    JSONObject o=out.optJSONObject("options");if(o==null)return bootloaderSummary(out.optJSONObject("record"));
+    String chain="mainline".equals(o.optString("chain"))?"Fully mainline":"Standard";
+    return t("Boot chain")+": "+t(chain)+"; "+t("Sleep firmware")+": "+("image".equals(o.optString("sleep"))?t("As in the image"):o.optString("sleep"));
+  }
   private String bootloaderSummary(JSONObject record) {
+ if(record==null&&bootOptionsView!=null&&!bootOptionsView.changed.getText().toString().isEmpty())return bootOptionsView.changed.getText().toString();
     String choice=record==null?WorkState.bootloaderChoice:record.optString("choice");
     JSONObject build=record==null?loaderBuild(choice):record;
     if(build!=null&&("standard".equals(choice)||"new".equals(choice)))
       return "new".equals(choice)?t("Bootloader: New U-Boot %s (%s)",build.optString("version"),build.optString("tag")):t("Bootloader: Standard U-Boot %s (%s)",build.optString("version"),build.optString("tag"));
     return t("Bootloader: as in the image");
   }
-  private void renderBootloader(boolean busy) {
-    boolean unsupported=WorkState.card!=null&&WorkState.card.optBoolean("data_card");
-    renderingBootloader=true;
-    String[] titles={"As in the image","Standard U-Boot, newest test build","New U-Boot, newest test build"};
-    for(int n=0;n<3;n++) {
-      JSONObject b=loaderBuild(BOOTLOADER_CHOICES[n]);
-      String detail=n==0?t("recommended"):b!=null?b.optString("version")+" · "+b.optString("tag"):
-        WorkState.bootloaderFailed?"":t("Looking for bootloader builds…");
-      bootloaderButtons[n].setText(t(titles[n])+"    "+detail);
-      bootloaderButtons[n].setEnabled(!busy&&!unsupported&&(n==0?WorkState.image!=null:b!=null));
-      bootloaderButtons[n].setChecked(BOOTLOADER_CHOICES[n].equals(WorkState.bootloaderChoice));
-    }
-    renderingBootloader=false;
-    bootloaderHint.setText(unsupported?t("Only for SD cards for now."):WorkState.bootloaderFailed?t("Couldn't reach GitHub. The image's bootloader will be used."):"");
-  }
-  private void showBootloaderCard() {
-    JSONObject info=WorkState.bootloaderInfo; WorkState.bootloaderInfo=null;
-    UsbCard card=WorkState.bootloaderTarget;
-    JSONObject layout=info.optJSONObject("card");
-    boolean unsupported=layout==null||layout.optBoolean("data_card");
-    final String[] selected={""};
-    LinearLayout box=new LinearLayout(this);box.setPadding(dp(24),dp(8),dp(24),0);box.setOrientation(LinearLayout.VERTICAL);
-    JSONObject setup=info.optJSONObject("setup");
-    if(setup!=null&&setup.optJSONObject("bootloader")!=null) {TextView current=new TextView(this);current.setText(bootloaderSummary(setup.optJSONObject("bootloader")));box.addView(current);}
-    RadioGroup rows=new RadioGroup(this);box.addView(rows);
-    String[] titles={"As in the image","Standard U-Boot, newest test build","New U-Boot, newest test build"};
-    for(int n=0;n<3;n++) {
-      final int index=n;JSONObject b=loaderBuild(BOOTLOADER_CHOICES[n]);RadioButton row=new RadioButton(this);row.setId(View.generateViewId());
-      row.setText(t(titles[n])+(b==null?"":"    "+b.optString("version")+" · "+b.optString("tag")));
-      row.setEnabled(!unsupported&&(n==0?WorkState.image!=null:b!=null));rows.addView(row);
-      row.setOnClickListener(v->selected[0]=BOOTLOADER_CHOICES[index]);
-    }
-    TextView hint=new TextView(this);hint.setText(unsupported?t("Only for SD cards for now."):
-      (WorkState.image==null?t("Choose the image file to put its bootloader back.")+"\n":"")+
-      (WorkState.bootloaderFailed?t("Couldn't reach GitHub. The image's bootloader will be used.")+"\n":"")+t(BOOTLOADER_WARNING));box.addView(hint);
-    new AlertDialog.Builder(this).setTitle(t("Bootloader")).setView(box).setNegativeButton(t("Cancel"),null)
-      .setNeutralButton(t("Choose image from disk…"),(d,w)->pick(1))
-      .setPositiveButton(t("Apply"),(d,w)->{
-        if(selected[0].isEmpty())return;
-        WorkState.start(getApplicationContext(),true,()->{
-          try(UsbCard.Connection disk=card.open(getApplicationContext())) {
-            JSONObject choice=new JSONObject().put("choice",selected[0]);JSONObject b=loaderBuild(selected[0]);if(b!=null)choice.put("build",b);
-            JSONObject req=new JSONObject().put("identity",disk.identity()).put("fingerprint",layout.getString("fingerprint"))
-              .put("build",info.getString("build_identity")).put("bootloader",choice);
-            JSONObject out=new JSONObject(WorkState.engine.applyBootloader(disk,req.toString(),WorkState::event));
-            WorkState.note=out.optString("warning").isEmpty()?bootloaderSummary(out.optJSONObject("record")):t(out.optString("warning"));
-            WorkState.message="Ready";
-          }
-        });
-      }).show();
+  private void renderBootloader(boolean busy){if(bootOptionsView!=null){bootOptionsView.context=bootContext(null);bootOptionsView.refresh(busy);}}
+  private void showBootloaderCard(){
+    JSONObject info=WorkState.bootloaderInfo;WorkState.bootloaderInfo=null;UsbCard card=WorkState.bootloaderTarget;
+    JSONObject layout=info.optJSONObject("card"),setup=info.optJSONObject("setup");
+    try{
+      JSONObject context=info.optJSONObject("boot_target");if(context==null)context=bootContext(setup);context.put("image_available",WorkState.image!=null);context.put("storage",layout==null||layout.optBoolean("data_card")?"emmc":"sd");
+      JSONObject initial=new JSONObject().put("choice","image").put("chain","standard").put("sleep","image");
+      BootOptionsView view=new BootOptionsView(initial,context,c->{});
+      new AlertDialog.Builder(this).setTitle(t("Boot options")).setView(view).setNegativeButton(t("Cancel"),null).setNeutralButton(t("Choose image from disk…"),(d,w)->pick(1)).setPositiveButton(t("Apply"),(d,w)->view.confirm(choice->{
+        WorkState.start(getApplicationContext(),true,()->{try(UsbCard.Connection disk=card.open(getApplicationContext())){
+          JSONObject req=new JSONObject().put("identity",disk.identity()).put("fingerprint",layout.getString("fingerprint")).put("build",info.getString("build_identity")).put("bootloader",choice);
+          JSONObject out=new JSONObject(WorkState.engine.applyBootloader(disk,req.toString(),WorkState::event));
+          WorkState.note=bootOutcome(out);WorkState.message="Ready";
+        }});
+      })).show();
+    }catch(Exception e){showError(e.toString());}
     WorkState.lookupBootloaders();
   }
 

@@ -49,9 +49,10 @@ type Request struct {
 	Guest *flash.Guest `json:"guest,omitempty"`
 }
 type Result struct {
-	DTBPack   *firmware.DTBPack   `json:"dtb_pack,omitempty"`
-	DTBPlan   *firmware.DTBPlan   `json:"dtb_plan,omitempty"`
-	DTBResult *firmware.DTBResult `json:"dtb_result,omitempty"`
+	BootTarget *firmware.BootTarget `json:"boot_target,omitempty"`
+	DTBPack    *firmware.DTBPack    `json:"dtb_pack,omitempty"`
+	DTBPlan    *firmware.DTBPlan    `json:"dtb_plan,omitempty"`
+	DTBResult  *firmware.DTBResult  `json:"dtb_result,omitempty"`
 
 	Bootloader     *firmware.BootloaderOutcome `json:"bootloader,omitempty"`
 	Setup          *firmware.CardSetup         `json:"setup,omitempty"`
@@ -208,6 +209,13 @@ func Worker(job string) error {
 				}
 				setup, err := firmware.ReadCardSetup(boot)
 				result.Setup = &setup
+				if err == nil {
+					target, e := firmware.CardBootTarget(h.File, d.Size, nil)
+					if e != nil {
+						return e
+					}
+					result.BootTarget = &target
+				}
 				return err
 			}
 			if d.Fixed || card.DataCard {
@@ -220,7 +228,7 @@ func Worker(job string) error {
 				return errors.New("the card changed; choose it again")
 			}
 			var image *firmware.Image
-			if req.Image != "" && req.Bootloader.Choice == "image" {
+			if req.Image != "" {
 				if req.ImageHash == "" {
 					image, err = firmware.Inspect(context.Background(), req.Image, nil)
 				} else {
@@ -230,7 +238,11 @@ func Worker(job string) error {
 					return err
 				}
 			}
-			data, out, err := firmware.ResolveBootloader(context.Background(), *req.Bootloader, image, dir)
+			target, err := firmware.CardBootTarget(h.File, d.Size, image)
+			if err != nil {
+				return err
+			}
+			data, out, err := firmware.ResolveBootOptions(context.Background(), *req.Bootloader, image, target, dir)
 			result.Bootloader = out
 			if err != nil {
 				return err
@@ -240,7 +252,7 @@ func Worker(job string) error {
 			}
 			h.Remount = true
 			emit(Result{Progress: &flash.Progress{Phase: "Bootloader", Done: 0, Total: firmware.BootloaderSize}})
-			return firmware.ApplyBootloader(h.File, d.Size, data, *out.Record, build, dir)
+			return firmware.ApplyResolvedBootOptions(h.File, d.Size, data, out, build, dir)
 		}
 		if req.Action == "hotfix-list" || req.Action == "hotfix-apply" {
 			h, e := platform.Open(d, req.Action == "hotfix-apply")
@@ -365,12 +377,12 @@ func Worker(job string) error {
 		var loader []byte
 		if req.Bootloader != nil {
 			if d.Fixed || card.DataCard {
-				if req.Bootloader.Choice != "" && req.Bootloader.Choice != "image" || req.Bootloader.File != "" {
+				if req.Bootloader.Changed() || req.Bootloader.File != "" {
 					return errors.New(firmware.BootloaderOnlySD)
 				}
 			} else {
 				emit(Result{Progress: &flash.Progress{Phase: "Bootloader"}})
-				loader, result.Bootloader, e = firmware.ResolveBootloader(context.Background(), *req.Bootloader, im, dir)
+				loader, result.Bootloader, e = firmware.ResolveBootOptions(context.Background(), *req.Bootloader, im, firmware.ImageBootTarget(im, req.Profile), dir)
 				if e != nil {
 					return e
 				}
@@ -430,7 +442,7 @@ func Worker(job string) error {
 		}
 		if loader != nil {
 			emit(Result{Progress: &flash.Progress{Phase: "Bootloader", Done: 0, Total: firmware.BootloaderSize}})
-			if e = firmware.ApplyBootloader(h.File, d.Size, loader, *result.Bootloader.Record, im.BuildIdentity, dir); e != nil {
+			if e = firmware.ApplyResolvedBootOptions(h.File, d.Size, loader, result.Bootloader, im.BuildIdentity, dir); e != nil {
 				return e
 			}
 		}

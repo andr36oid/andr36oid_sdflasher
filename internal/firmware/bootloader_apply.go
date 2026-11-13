@@ -11,11 +11,17 @@ import (
 )
 
 type BootloaderChoice struct {
+	Chain  string           `json:"chain,omitempty"`
+	Sleep  string           `json:"sleep,omitempty"`
+	Force  bool             `json:"force_boot_options,omitempty"`
 	Choice string           `json:"choice"`
 	File   string           `json:"file,omitempty"`
 	Build  *BootloaderBuild `json:"build,omitempty"`
 }
 type BootloaderOutcome struct {
+	Issues  []BootIssue        `json:"issues,omitempty"`
+	Options *BootOptionsRecord `json:"options,omitempty"`
+	plan    *BootPlan
 	Record  *BootloaderRecord `json:"record,omitempty"`
 	Warning string            `json:"warning,omitempty"`
 }
@@ -83,7 +89,7 @@ func ResolveBootloader(ctx context.Context, choice BootloaderChoice, image *Imag
 	}
 	sum := sha256.Sum256(data)
 	record.SHA256 = hex.EncodeToString(sum[:])
-	record.Time = time.Now().UTC().Format(time.RFC3339Nano)
+	record.Time = setupNow().UTC().Format(time.RFC3339Nano)
 	out.Record = record
 	return data, out, nil
 }
@@ -133,7 +139,7 @@ func ApplyBootloader(disk HotfixDisk, size int64, data []byte, record Bootloader
 	if len(setup.BootloaderHistory) > 5 {
 		setup.BootloaderHistory = setup.BootloaderHistory[len(setup.BootloaderHistory)-5:]
 	}
-	record.Time = time.Now().UTC().Format(time.RFC3339Nano)
+	record.Time = setupNow().UTC().Format(time.RFC3339Nano)
 	setup.Bootloader = &record
 	if e = stage.Save(setup); e != nil {
 		return fmt.Errorf("prepare card history: %w", e)

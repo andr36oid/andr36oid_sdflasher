@@ -161,7 +161,9 @@ func (s *screen) summarize() {
 	set(3, s.dtbText())
 	if s.bootloaderOptions != nil {
 		if c := s.bootloaderOptions.selection(); c != nil {
-			if c.Build != nil {
+			if c.Changed() {
+				set(6, s.bootloaderOptions.summary.Text)
+			} else if c.Build != nil {
 				set(6, s.bootloaderSummary(&firmware.BootloaderRecord{Choice: c.Choice, Version: c.Build.Version, Tag: c.Build.Tag}))
 			} else {
 				set(6, s.t("Bootloader: as in the image"))
@@ -198,7 +200,7 @@ func (s *screen) summarize() {
 	s.action.Refresh()
 }
 
-var summaryKeys = [len(screen{}.sumValues)]string{"Release", "microSD card", "Device profile", "DTB", "Action", "Storage", "Bootloader"}
+var summaryKeys = [len(screen{}.sumValues)]string{"Release", "microSD card", "Device profile", "DTB", "Action", "Storage", "Boot options"}
 
 func (s *screen) summaryForm() *widget.Form {
 	f := widget.NewForm()
