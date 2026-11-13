@@ -41,6 +41,12 @@ public final class MainActivity extends Activity {
   private TextView guestInfo;
   private LinearLayout guestBox;
   private RadioButton install, update;
+  private RadioGroup bootloaderRows;
+  private final RadioButton[] bootloaderButtons = new RadioButton[3];
+  private TextView bootloaderHint,dtbLabel;
+  private boolean renderingBootloader;
+  private static final String[] BOOTLOADER_CHOICES={"image","standard","new"};
+  private static final String BOOTLOADER_WARNING="Test builds are tried on few consoles. If the console no longer starts, write the card again with \"As in the image\".";
   private ProgressBar progress;
   private DiskMap map;
   private String lastError = "", lastResult = "";
@@ -360,6 +366,8 @@ public final class MainActivity extends Activity {
     label(t("Choose your console"), true);
     label(t("Choose the board family first, then the board and screen."), false);
     console = button("Choose your console / board family", v -> chooseConsole());
+    dtbLabel=label("",false);
+    button("Change...",v->{if(WorkState.image!=null)pick(5);});
     profile = button("Choose your board and screen", v -> chooseProfile());
     button(
         "I don’t know my board or panel",
@@ -467,6 +475,18 @@ public final class MainActivity extends Activity {
           WorkState.guest = checked;
           WorkState.revision++;
         });
+    label(t("Bootloader"), true);
+    bootloaderRows = new RadioGroup(this);
+    String[] loaderTitles={"As in the image","Standard U-Boot, newest test build","New U-Boot, newest test build"};
+    for (int n=0;n<3;n++) {
+      final int index=n;
+      RadioButton row=new RadioButton(this); row.setId(View.generateViewId());
+      row.setText(t(loaderTitles[n])); bootloaderButtons[n]=row; bootloaderRows.addView(row);
+      row.setOnClickListener(v -> {if(!renderingBootloader){WorkState.bootloaderChoice=BOOTLOADER_CHOICES[index];WorkState.revision++;}});
+    }
+    target.addView(bootloaderRows);
+    bootloaderHint=label("",false);
+    label(t(BOOTLOADER_WARNING), false);
     systemLabel = label("", false);
     button(
         "Advanced: different system image (GSI)",
@@ -516,6 +536,8 @@ public final class MainActivity extends Activity {
     next.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
     target = body;
     quiet(button("Restore an interrupted update…", v -> recover()));
+    quiet(button("Update device trees",v->{if(WorkState.busy)return;WorkState.choosingDTBCard=true;readers();}));
+    quiet(button("Bootloader", v -> { if(WorkState.busy)return; WorkState.choosingBootloaderCard=true; readers(); }));
     quiet(
         button(
             "Apply hotfixes",
@@ -650,6 +672,8 @@ public final class MainActivity extends Activity {
     noROMs.setChecked(WorkState.noROMs);
     noROMs.setEnabled(!busy && !WorkState.update);
     renderGuest(busy);
+    renderBootloader(busy);
+    dtbLabel.setText(WorkState.image==null||WorkState.image.optString("dtb_version").isEmpty()?"":t("Using device trees from %s",WorkState.image.optString("dtb_version")));
     renderStorage(busy);
     systemLabel.setText(systemText());
     boolean ready = true;
@@ -662,6 +686,7 @@ public final class MainActivity extends Activity {
     // a step that lost what it needs (card removed, new image) sends the user back
     while (WorkState.step > 0 && !reachable(WorkState.step)) WorkState.step--;
     int step = WorkState.step;
+    if(step==3) WorkState.lookupBootloaders();
     for (int n = 0; n < sections.length; n++)
       sections[n].setVisibility(n == step ? View.VISIBLE : View.GONE);
     stepLabel.setText(t("Step %d of %d: %s", step + 1, STEPS.length, t(STEPS[step])));
@@ -699,7 +724,7 @@ public final class MainActivity extends Activity {
             + "\n"
             + t("Storage")
             + ": "
-            + storageText());
+            + storageText() + "\n" + bootloaderSummary(null));
     help.setText(
         WorkState.update
             ? t(
@@ -788,6 +813,14 @@ public final class MainActivity extends Activity {
       fetchHotfixes(WorkState.hotfixTarget, WorkState.image.optString("build_identity"));
       return;
     }
+    if(!busy&&WorkState.dtbMessagePending){WorkState.dtbMessagePending=false;dtbInfo(t(WorkState.dtbMessageTitle),t(WorkState.dtbMessageBody));}
+    if(!busy&&WorkState.dtbSourcePending){WorkState.dtbSourcePending=false;showDTBSource();}
+    if(!busy&&WorkState.dtbPreview!=null){JSONObject preview=WorkState.dtbPreview;WorkState.dtbPreview=null;showDTBPreview(preview);}
+    if(!busy&&WorkState.step==2){
+      if(WorkState.dtbOnlineOffer!=null){JSONObject offer=WorkState.dtbOnlineOffer;WorkState.dtbOnlineOffer=null;WorkState.start(getApplicationContext(),false,()->{WorkState.image=new JSONObject(WorkState.engine.imageDTBReference(offer.getString("path"),offer.optString("manifest_path")));WorkState.autoProfile();WorkState.message="Ready";});}
+      else WorkState.lookupImageDTBs();
+    }
+    if (!busy && WorkState.bootloaderInfo != null) showBootloaderCard();
     if (!busy && !hotfixDialogShown && WorkState.hotfixOffer != null) showHotfixes();
     if (!busy && !hotfixDialogShown && !WorkState.hotfixMessage.isEmpty()) {
       hotfixDialogShown = true;
@@ -1011,6 +1044,7 @@ public final class MainActivity extends Activity {
       return;
     }
     String lower = name.toLowerCase(Locale.ROOT);
+    if ((request==5||request==6)&&!lower.endsWith(".zip")){showError(t("This file is not a complete device tree set. Download it again."));return;}
     if (request == 4 && !lower.endsWith(".img")) {
       showError(t("Choose an .img system image."));
       return;
@@ -1035,7 +1069,7 @@ public final class MainActivity extends Activity {
       return;
     }
     final String extension =
-        request == 4
+        request==5||request==6?".zip":request == 4
             ? ".img"
             : request >= 2
                 ? ".dtb"
@@ -1057,12 +1091,14 @@ public final class MainActivity extends Activity {
             int n;
             while ((n = in.read(buffer)) != -1) {
               total += n;
-              if (total > (request == 4 ? 4L << 30 : request >= 2 ? 4L << 20 : 32L << 30))
+              if (total > (request==5||request==6?256L<<20:request == 4 ? 4L << 30 : request >= 2 ? 4L << 20 : 32L << 30))
                 throw new IOException("Selected file exceeds the size limit");
               out.write(buffer, 0, n);
             }
             out.getFD().sync();
-            if (request == 4) {
+            if(request==5){WorkState.image=new JSONObject(WorkState.engine.imageDTBs(file.getAbsolutePath()));WorkState.autoProfile();}
+            else if(request==6){WorkState.dtbFile=file.getAbsolutePath();WorkState.dtbSourcePending=true;}
+            else if (request == 4) {
               WorkState.clearSystem();
               WorkState.system = file.getAbsolutePath();
               WorkState.systemName = shown;
@@ -1298,6 +1334,26 @@ public final class MainActivity extends Activity {
   }
 
   private void inspect(UsbCard target) {
+    if(WorkState.choosingDTBCard){
+      WorkState.choosingDTBCard=false;Context app=getApplicationContext();
+      WorkState.start(app,true,()->{try(UsbCard.Connection disk=target.open(app)){WorkState.dtbCardInfo=new JSONObject(WorkState.engine.dtbInfo(disk));WorkState.dtbTarget=target;WorkState.dtbIdentity=disk.identity();WorkState.dtbSourcePending=true;WorkState.message="Ready";}});return;
+    }
+    if (WorkState.choosingBootloaderCard) {
+      WorkState.choosingBootloaderCard=false;
+      Context app=getApplicationContext();
+      WorkState.start(app,true,()->{
+        try(UsbCard.Connection disk=target.open(app)) {
+          if(!WorkState.bootloaderLookup) {
+            WorkState.bootloaderLookup=true;
+            try {WorkState.bootloaderOffers=new JSONArray(WorkState.engine.bootloaderOffers());}
+            catch(Exception e) {WorkState.bootloaderFailed=true;}
+          }
+          WorkState.bootloaderTarget=target;
+          WorkState.bootloaderInfo=new JSONObject(WorkState.engine.bootloaderInfo(disk));
+        }
+      });
+      return;
+    }
     if (WorkState.choosingHotfixCard) {
       WorkState.choosingHotfixCard = false;
       fetchHotfixes(target, "");
@@ -1369,7 +1425,7 @@ public final class MainActivity extends Activity {
         .setPositiveButton(
             t(updating ? "Update" : "Erase and install"),
             (dialog, which) -> {
-              WorkState.start(
+              withDTBFreshScreen(() -> WorkState.start(
                   app,
                   true,
                   () -> {
@@ -1393,11 +1449,14 @@ public final class MainActivity extends Activity {
                               : "Want to add your own apps? Before the first start, connect the"
                                   + " card to a computer and copy APK files to its AUTOAPK drive."
                                   + " The console offers them during setup.";
+                      JSONObject loaderResult=new JSONObject(WorkState.result).optJSONObject("bootloader");
+                      if(loaderResult!=null) WorkState.note += "\n" +
+                        (!loaderResult.optString("warning").isEmpty()?t(loaderResult.optString("warning")):bootloaderSummary(loaderResult.optJSONObject("record")));
                       WorkState.card = null;
                       WorkState.hotfixTarget = target;
                       WorkState.hotfixAfterFlash = true;
                     }
-                  });
+                  }));
             })
         .show();
   }
@@ -1570,7 +1629,10 @@ public final class MainActivity extends Activity {
                                     WorkState.message =
                                         "The previous installation was restored and verified.";
                                     WorkState.result = dir;
-                                    WorkState.card = null;
+                                    JSONObject loaderResult=new JSONObject(WorkState.result).optJSONObject("bootloader");
+                      if(loaderResult!=null) WorkState.note += "\n" +
+                        (!loaderResult.optString("warning").isEmpty()?t(loaderResult.optString("warning")):bootloaderSummary(loaderResult.optJSONObject("record")));
+                      WorkState.card = null;
                                   }
                                 }))
                     .show();
@@ -1785,4 +1847,152 @@ public final class MainActivity extends Activity {
         .setPositiveButton(t("OK"), null)
         .show();
   }
+  private JSONObject loaderBuild(String choice) {
+    JSONArray builds=WorkState.bootloaderOffers;
+    if(builds!=null) for(int n=0;n<builds.length();n++) {JSONObject b=builds.optJSONObject(n);if(b!=null&&choice.equals(b.optString("choice")))return b;}
+    return null;
+  }
+  private String bootloaderSummary(JSONObject record) {
+    String choice=record==null?WorkState.bootloaderChoice:record.optString("choice");
+    JSONObject build=record==null?loaderBuild(choice):record;
+    if(build!=null&&("standard".equals(choice)||"new".equals(choice)))
+      return "new".equals(choice)?t("Bootloader: New U-Boot %s (%s)",build.optString("version"),build.optString("tag")):t("Bootloader: Standard U-Boot %s (%s)",build.optString("version"),build.optString("tag"));
+    return t("Bootloader: as in the image");
+  }
+  private void renderBootloader(boolean busy) {
+    boolean unsupported=WorkState.card!=null&&WorkState.card.optBoolean("data_card");
+    renderingBootloader=true;
+    String[] titles={"As in the image","Standard U-Boot, newest test build","New U-Boot, newest test build"};
+    for(int n=0;n<3;n++) {
+      JSONObject b=loaderBuild(BOOTLOADER_CHOICES[n]);
+      String detail=n==0?t("recommended"):b!=null?b.optString("version")+" · "+b.optString("tag"):
+        WorkState.bootloaderFailed?"":t("Looking for bootloader builds…");
+      bootloaderButtons[n].setText(t(titles[n])+"    "+detail);
+      bootloaderButtons[n].setEnabled(!busy&&!unsupported&&(n==0?WorkState.image!=null:b!=null));
+      bootloaderButtons[n].setChecked(BOOTLOADER_CHOICES[n].equals(WorkState.bootloaderChoice));
+    }
+    renderingBootloader=false;
+    bootloaderHint.setText(unsupported?t("Only for SD cards for now."):WorkState.bootloaderFailed?t("Couldn't reach GitHub. The image's bootloader will be used."):"");
+  }
+  private void showBootloaderCard() {
+    JSONObject info=WorkState.bootloaderInfo; WorkState.bootloaderInfo=null;
+    UsbCard card=WorkState.bootloaderTarget;
+    JSONObject layout=info.optJSONObject("card");
+    boolean unsupported=layout==null||layout.optBoolean("data_card");
+    final String[] selected={""};
+    LinearLayout box=new LinearLayout(this);box.setPadding(dp(24),dp(8),dp(24),0);box.setOrientation(LinearLayout.VERTICAL);
+    JSONObject setup=info.optJSONObject("setup");
+    if(setup!=null&&setup.optJSONObject("bootloader")!=null) {TextView current=new TextView(this);current.setText(bootloaderSummary(setup.optJSONObject("bootloader")));box.addView(current);}
+    RadioGroup rows=new RadioGroup(this);box.addView(rows);
+    String[] titles={"As in the image","Standard U-Boot, newest test build","New U-Boot, newest test build"};
+    for(int n=0;n<3;n++) {
+      final int index=n;JSONObject b=loaderBuild(BOOTLOADER_CHOICES[n]);RadioButton row=new RadioButton(this);row.setId(View.generateViewId());
+      row.setText(t(titles[n])+(b==null?"":"    "+b.optString("version")+" · "+b.optString("tag")));
+      row.setEnabled(!unsupported&&(n==0?WorkState.image!=null:b!=null));rows.addView(row);
+      row.setOnClickListener(v->selected[0]=BOOTLOADER_CHOICES[index]);
+    }
+    TextView hint=new TextView(this);hint.setText(unsupported?t("Only for SD cards for now."):
+      (WorkState.image==null?t("Choose the image file to put its bootloader back.")+"\n":"")+
+      (WorkState.bootloaderFailed?t("Couldn't reach GitHub. The image's bootloader will be used.")+"\n":"")+t(BOOTLOADER_WARNING));box.addView(hint);
+    new AlertDialog.Builder(this).setTitle(t("Bootloader")).setView(box).setNegativeButton(t("Cancel"),null)
+      .setNeutralButton(t("Choose image from disk…"),(d,w)->pick(1))
+      .setPositiveButton(t("Apply"),(d,w)->{
+        if(selected[0].isEmpty())return;
+        WorkState.start(getApplicationContext(),true,()->{
+          try(UsbCard.Connection disk=card.open(getApplicationContext())) {
+            JSONObject choice=new JSONObject().put("choice",selected[0]);JSONObject b=loaderBuild(selected[0]);if(b!=null)choice.put("build",b);
+            JSONObject req=new JSONObject().put("identity",disk.identity()).put("fingerprint",layout.getString("fingerprint"))
+              .put("build",info.getString("build_identity")).put("bootloader",choice);
+            JSONObject out=new JSONObject(WorkState.engine.applyBootloader(disk,req.toString(),WorkState::event));
+            WorkState.note=out.optString("warning").isEmpty()?bootloaderSummary(out.optJSONObject("record")):t(out.optString("warning"));
+            WorkState.message="Ready";
+          }
+        });
+      }).show();
+    WorkState.lookupBootloaders();
+  }
+
+  private void showDTBSource(){
+    JSONObject info=WorkState.dtbCardInfo;if(info==null)return;
+    LinearLayout box=new LinearLayout(this);box.setPadding(dp(24),dp(8),dp(24),0);box.setOrientation(LinearLayout.VERTICAL);
+    TextView intro=new TextView(this);intro.setText(t("Device trees tell the system which screen, buttons and sound chip your console has. A newer set can fix or add support for a console without writing the whole card again. Your games, saves and settings stay."));box.addView(intro);
+    TextView card=new TextView(this);card.setText(t("Card")+": "+WorkState.dtbTarget.label());box.addView(card);
+    RadioGroup rows=new RadioGroup(this);box.addView(rows);List<String> modes=new ArrayList<>();modes.add("online");modes.add("file");
+    JSONObject setup=info.optJSONObject("setup");if(setup!=null&&setup.optJSONArray("history")!=null&&setup.optJSONArray("history").length()>0)modes.add("restore");
+    String[] labels={"Look for the set that belongs to this card online","Use a file I downloaded","Put the previous files back"};
+    final String[] selected={WorkState.dtbFile.isEmpty()?"online":"file"};
+    android.net.ConnectivityManager connectivity=(android.net.ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
+    if(WorkState.dtbFile.isEmpty()&&(connectivity==null||connectivity.getActiveNetworkInfo()==null||!connectivity.getActiveNetworkInfo().isConnected()))selected[0]="file";
+    for(int n=0;n<modes.size();n++){final String mode=modes.get(n);RadioButton row=new RadioButton(this);row.setId(View.generateViewId());row.setText(t(labels[n]));rows.addView(row);row.setChecked(mode.equals(selected[0]));row.setOnClickListener(v->selected[0]=mode);}
+    TextView file=new TextView(this);file.setText(WorkState.dtbFile.isEmpty()?"":new File(WorkState.dtbFile).getName());box.addView(file);
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(t("Update device trees")).setView(box).setNegativeButton(t("Cancel"),null)
+      .setNeutralButton(t("Choose file..."),(d,w)->pick(6)).setPositiveButton(t("Continue"),null).create();
+    dialog.setOnShowListener(d->{Button next=dialog.getButton(AlertDialog.BUTTON_POSITIVE);Runnable ready=()->next.setEnabled(!"file".equals(selected[0])||!WorkState.dtbFile.isEmpty());
+      rows.setOnCheckedChangeListener((g,id)->{int n=rows.indexOfChild(g.findViewById(id));if(n>=0)selected[0]=modes.get(n);ready.run();});ready.run();
+      next.setOnClickListener(v->{try{JSONObject layout=info.getJSONObject("card");JSONObject req=new JSONObject().put("identity",WorkState.dtbIdentity).put("fingerprint",layout.getString("fingerprint")).put("build",info.getString("build_identity"))
+        .put("file",WorkState.dtbFile).put("online","online".equals(selected[0])).put("restore","restore".equals(selected[0])).put("options",new JSONObject());dialog.dismiss();runDTBRequest(req,false);}catch(Exception e){showError(e.toString());}});
+    });dialog.show();
+  }
+  private void runDTBRequest(JSONObject req,boolean apply){
+    WorkState.dtbRequest=req.toString();UsbCard target=WorkState.dtbTarget;Context app=getApplicationContext();
+    WorkState.start(app,true,()->{try(UsbCard.Connection disk=target.open(app)){
+      if(apply){JSONObject result=new JSONObject(WorkState.engine.applyDTBPack(disk,req.toString(),WorkState::event));boolean restore=req.optBoolean("restore");
+        WorkState.message=result.optBoolean("already")?"This card already has these device trees.":restore?"Previous device trees are back":"Device trees updated";
+        WorkState.note=result.optBoolean("already")?"This card already has these device trees.":result.optBoolean("screen_changed")?Mobile.dtbScreenSuccess():restore?"The card starts with the files it had before the update.":"Put the card back into the console and start it. If the picture or the buttons are wrong afterwards, open this screen again and choose \"Put the previous files back\".";
+        WorkState.dtbMessageTitle=WorkState.message;WorkState.dtbMessageBody=WorkState.note;WorkState.dtbMessagePending=true;
+      }else{WorkState.dtbPreview=new JSONObject(WorkState.engine.dtbPlan(disk,req.toString()));WorkState.message="Ready";}
+    }catch(Exception e){String reason=e.getMessage()==null?e.toString():e.getMessage();
+      if(apply&&!reason.contains("device tree write and rollback failed"))reason=t("Writing stopped: %s. The card still starts with its previous files.",t(reason));
+      WorkState.dtbMessageTitle="Update device trees";WorkState.dtbMessageBody=reason;WorkState.dtbMessagePending=true;WorkState.message="Ready";
+    }});
+  }
+  private void showDTBPreview(JSONObject preview){
+    try{
+      JSONObject plan=preview.getJSONObject("plan");
+      JSONObject pending=new JSONObject(WorkState.dtbRequest);
+      if(pending.optBoolean("restore")){confirmDTBScreen(plan,pending);return;}
+      JSONObject pack=preview.getJSONObject("pack"),setup=plan.getJSONObject("setup");
+      if(plan.optBoolean("already")&&!plan.optBoolean("manual")){dtbInfo(t("Update device trees"),t("This card already has these device trees."));return;}
+      JSONObject req=new JSONObject(WorkState.dtbRequest).put("file",pack.getString("path")).put("manifest",pack.optString("manifest_path")).put("online",false);
+      String current=plan.optString("profile").isEmpty()?t("default console (no profile chosen)"):t(plan.optBoolean("changed")?"files change":"no change");
+      String other=plan.optInt("updated")==0&&plan.optInt("added")==0?t("nothing to update"):t("%d updated, %d new",plan.optInt("updated"),plan.optInt("added"));
+      LinearLayout box=new LinearLayout(this);box.setPadding(dp(24),dp(8),dp(24),0);box.setOrientation(LinearLayout.VERTICAL);
+      TextView details=new TextView(this);details.setText(t("Card")+": "+setup.optString("build")+", "+setup.optString("kernel_line")+"\n"+t("Your console")+": "+current+"\n"+t("Other consoles")+": "+other+"\n\n"+t("The files in use now are kept on the card, so this can be undone."));box.addView(details);
+      if(setup.optInt("manifest_revision")>0&&pack.getJSONObject("manifest").optInt("revision")>setup.optInt("manifest_revision")){TextView newer=new TextView(this);newer.setText(t("A newer set exists."));box.addView(newer);}
+      Button console=new Button(this);console.setText(t("Console")+": "+plan.optString("profile"));box.addView(console);
+      AlertDialog dialog=new AlertDialog.Builder(this).setTitle(t("Device trees for %s",pack.getJSONObject("manifest").getString("version"))+" · r"+pack.getJSONObject("manifest").optInt("revision")).setView(box).setNegativeButton(t("Cancel"),null)
+        .setPositiveButton(t("Apply"),(d,w)->{if(plan.optBoolean("manual"))new AlertDialog.Builder(this).setTitle(t("The console files on this card were changed by hand"))
+          .setMessage(t("The files this card starts with are not the ones its console profile normally uses. Applying the set replaces them with the standard files for %s. The current files are kept on the card.",plan.optString("profile")))
+          .setNegativeButton(t("Cancel"),null).setPositiveButton(t("Replace them"),(x,y)->{try{req.getJSONObject("options").put("replace_anyway",true);confirmDTBScreen(plan,req);}catch(Exception e){showError(e.toString());}}).show();else confirmDTBScreen(plan,req);}).create();
+      console.setOnClickListener(v->showDTBProfiles(plan,req,dialog));dialog.show();
+
+    }catch(Exception e){showError(e.toString());}
+  }
+
+  private void confirmDTBScreen(JSONObject plan,JSONObject req){
+    if(!plan.optBoolean("screen_changed")){runDTBRequest(req,true);return;}
+    new AlertDialog.Builder(this).setTitle(t("Watch the screen at the first start")).setMessage(t(Mobile.dtbScreenWarning()))
+      .setNegativeButton(t("Cancel"),null).setPositiveButton(t("I'll watch the screen"),(d,w)->{try{req.getJSONObject("options").put("screen_accepted",true);runDTBRequest(req,true);}catch(Exception e){showError(e.toString());}}).show();
+  }
+  private void showDTBProfiles(JSONObject plan,JSONObject req,AlertDialog previous){
+    JSONArray profiles=plan.optJSONArray("profiles");if(profiles==null)return;
+    JSONObject setup=plan.optJSONObject("setup");String current=setup==null?"":setup.optString("profile");String console="";
+    for(int n=0;n<profiles.length();n++){JSONObject p=profiles.optJSONObject(n);if(p!=null&&current.equals(p.optString("id")))console=p.optString("console");}
+    List<JSONObject> known=new ArrayList<>(),all=new ArrayList<>();for(int n=0;n<profiles.length();n++){JSONObject p=profiles.optJSONObject(n);if(p==null)continue;all.add(p);boolean fits=!console.isEmpty()&&console.equals(p.optString("console"));JSONArray aliases=p.optJSONArray("also_for");if(aliases!=null&&!console.isEmpty())for(int a=0;a<aliases.length();a++)if(console.equals(aliases.optString(a)))fits=true;if(fits)known.add(p);}
+    showDTBProfileGroup(known,all,req,previous,false);
+  }
+  private void showDTBProfileGroup(List<JSONObject> choices,List<JSONObject> all,JSONObject req,AlertDialog previous,boolean expanded){
+    String[] names=new String[choices.size()];for(int n=0;n<names.length;n++){JSONObject p=choices.get(n);names[n]=p.optString("name")+(p.optBoolean("experimental")?" ("+t("experimental")+")":"");}
+    AlertDialog.Builder dialog=new AlertDialog.Builder(this).setTitle(t(expanded?"All screens":"Known to fit this console"));
+    if(expanded){TextView header=new TextView(this);header.setText(t("All screens")+"\n"+t("Only choose from here if you know which screen your console has."));header.setPadding(dp(24),dp(16),dp(24),dp(8));dialog.setCustomTitle(header);}
+    dialog.setItems(names,(d,n)->{try{req.getJSONObject("options").put("profile",choices.get(n).getString("id"));previous.dismiss();runDTBRequest(req,false);}catch(Exception e){showError(e.toString());}}).setNegativeButton(t("Cancel"),null);
+    if(!expanded)dialog.setNeutralButton(t("Show all screens"),(d,w)->showDTBProfileGroup(all,all,req,previous,true));dialog.show();
+  }
+
+  private void dtbInfo(String title,String message){new AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton(t("Close"),null).show();}
+  private void withDTBFreshScreen(Runnable run){
+    JSONObject profile=selectedProfile();if(profile==null||!profile.optBoolean("dtb_screen_changed")||!WorkState.custom.isEmpty()){run.run();return;}
+    new AlertDialog.Builder(this).setTitle(t("Watch the screen at the first start")).setMessage(t(Mobile.dtbScreenWarning())).setNegativeButton(t("Cancel"),null).setPositiveButton(t("I'll watch the screen"),(d,w)->run.run()).show();
+  }
+
 }

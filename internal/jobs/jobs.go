@@ -18,38 +18,52 @@ import (
 )
 
 type Request struct {
-	KernelOffer     *catalog.KernelOffer  `json:"kernel_offer,omitempty"`
-	HotfixOffer     *firmware.HotfixOffer `json:"hotfix_offer,omitempty"`
-	HotfixFiles     []string              `json:"hotfix_files,omitempty"`
-	Recovery        string                `json:"recovery,omitempty"`
-	Action          string                `json:"action"`
-	Drive           platform.Drive        `json:"drive"`
-	Image           string                `json:"image,omitempty"`
-	ImageHash       string                `json:"image_hash,omitempty"`
-	ImageSource     string                `json:"image_source,omitempty"`
-	CardFingerprint string                `json:"card_fingerprint,omitempty"`
-	Mode            string                `json:"mode,omitempty"`
-	Profile         string                `json:"profile,omitempty"`
-	NoROMs          bool                  `json:"no_roms,omitempty"`
-	UserdataGiB     int                   `json:"userdata_gib,omitempty"`
-	CustomDTB       string                `json:"custom_dtb,omitempty"`
-	CustomAccepted  bool                  `json:"custom_accepted,omitempty"`
-	ConvertDTB      bool                  `json:"convert_dtb,omitempty"`
-	SystemImage     string                `json:"system_image,omitempty"`
-	SystemAccepted  bool                  `json:"system_accepted,omitempty"`
+	DTBManifest string              `json:"dtb_manifest,omitempty"`
+	DTBFile     string              `json:"dtb_file,omitempty"`
+	DTBOnline   bool                `json:"dtb_online,omitempty"`
+	DTBExpected string              `json:"dtb_expected,omitempty"`
+	DTBOptions  firmware.DTBOptions `json:"dtb_options,omitempty"`
+
+	Bootloader         *firmware.BootloaderChoice `json:"bootloader,omitempty"`
+	BootloaderExpected string                     `json:"bootloader_expected,omitempty"`
+	KernelOffer        *catalog.KernelOffer       `json:"kernel_offer,omitempty"`
+	HotfixOffer        *firmware.HotfixOffer      `json:"hotfix_offer,omitempty"`
+	HotfixFiles        []string                   `json:"hotfix_files,omitempty"`
+	Recovery           string                     `json:"recovery,omitempty"`
+	Action             string                     `json:"action"`
+	Drive              platform.Drive             `json:"drive"`
+	Image              string                     `json:"image,omitempty"`
+	ImageHash          string                     `json:"image_hash,omitempty"`
+	ImageSource        string                     `json:"image_source,omitempty"`
+	CardFingerprint    string                     `json:"card_fingerprint,omitempty"`
+	Mode               string                     `json:"mode,omitempty"`
+	Profile            string                     `json:"profile,omitempty"`
+	NoROMs             bool                       `json:"no_roms,omitempty"`
+	UserdataGiB        int                        `json:"userdata_gib,omitempty"`
+	CustomDTB          string                     `json:"custom_dtb,omitempty"`
+	CustomAccepted     bool                       `json:"custom_accepted,omitempty"`
+	ConvertDTB         bool                       `json:"convert_dtb,omitempty"`
+	SystemImage        string                     `json:"system_image,omitempty"`
+	SystemAccepted     bool                       `json:"system_accepted,omitempty"`
 	// Guest is the dArkOSen release that gets its own partition on a fresh card.
 	Guest *flash.Guest `json:"guest,omitempty"`
 }
 type Result struct {
-	KernelIdentity *firmware.KernelIdentity `json:"kernel_identity,omitempty"`
-	BuildIdentity  string                   `json:"build_identity,omitempty"`
-	FirstBoot      *firmware.FirstBoot      `json:"first_boot,omitempty"`
-	HotfixResults  []firmware.HotfixResult  `json:"hotfix_results,omitempty"`
-	Done           bool                     `json:"done"`
-	Error          string                   `json:"error,omitempty"`
-	Card           *flash.Card              `json:"card,omitempty"`
-	Progress       *flash.Progress          `json:"progress,omitempty"`
-	Backup         string                   `json:"backup,omitempty"`
+	DTBPack   *firmware.DTBPack   `json:"dtb_pack,omitempty"`
+	DTBPlan   *firmware.DTBPlan   `json:"dtb_plan,omitempty"`
+	DTBResult *firmware.DTBResult `json:"dtb_result,omitempty"`
+
+	Bootloader     *firmware.BootloaderOutcome `json:"bootloader,omitempty"`
+	Setup          *firmware.CardSetup         `json:"setup,omitempty"`
+	KernelIdentity *firmware.KernelIdentity    `json:"kernel_identity,omitempty"`
+	BuildIdentity  string                      `json:"build_identity,omitempty"`
+	FirstBoot      *firmware.FirstBoot         `json:"first_boot,omitempty"`
+	HotfixResults  []firmware.HotfixResult     `json:"hotfix_results,omitempty"`
+	Done           bool                        `json:"done"`
+	Error          string                      `json:"error,omitempty"`
+	Card           *flash.Card                 `json:"card,omitempty"`
+	Progress       *flash.Progress             `json:"progress,omitempty"`
+	Backup         string                      `json:"backup,omitempty"`
 }
 
 func CacheDir() (string, error) {
@@ -103,6 +117,130 @@ func Worker(job string) error {
 			card, e := flash.InspectCard(h.File, d.Size)
 			result.Card = &card
 			return e
+		}
+
+		if req.Action == "dtb-info" || req.Action == "dtb-plan" || req.Action == "dtb-apply" || req.Action == "dtb-restore" || req.Action == "dtb-restore-plan" {
+			writing := req.Action == "dtb-apply" || req.Action == "dtb-restore"
+			h, e := platform.Open(d, writing)
+			if e != nil {
+				return e
+			}
+			defer h.Close()
+			card, e := flash.InspectCard(h.File, d.Size)
+			if e != nil {
+				return e
+			}
+			result.Card = &card
+			build, tab, e := firmware.CardBuildIdentity(h.File, d.Size)
+			if e != nil {
+				return errors.New(firmware.DTBPackNoBuild)
+			}
+			result.BuildIdentity = build
+			boot, e := firmware.OpenBoot(h.File, tab, true)
+			if e != nil {
+				return e
+			}
+			setup, e := firmware.ReadCardSetup(boot)
+			if e != nil {
+				return e
+			}
+			result.Setup = &setup
+			if req.Action == "dtb-info" {
+				return nil
+			}
+			if req.DTBExpected != build || req.CardFingerprint == "" || req.CardFingerprint != card.Fingerprint {
+				return errors.New("the card changed; choose it again")
+			}
+			if req.Action == "dtb-restore-plan" {
+				result.DTBPlan, e = firmware.PlanRestoreDTB(h.File, d.Size, build, dir)
+				return e
+			}
+			if req.Action == "dtb-restore" {
+				h.Remount = true
+				result.DTBResult, e = firmware.RestoreDTBSetup(h.File, d.Size, build, dir, req.DTBOptions)
+				return e
+			}
+			var pack *firmware.DTBPack
+			if req.DTBOnline {
+				pack, e = firmware.FetchDTBPack(context.Background(), setup, dir)
+			} else {
+				pack, e = firmware.ReadDTBPackReference(req.DTBFile, req.DTBManifest)
+			}
+			if e != nil {
+				return e
+			}
+			result.DTBPack = pack
+			result.DTBPlan, e = firmware.PlanDTBPack(h.File, d.Size, pack, build, dir, req.DTBOptions)
+			if e != nil {
+				return e
+			}
+			if req.Action == "dtb-plan" {
+				return nil
+			}
+			h.Remount = true
+			emit(Result{Progress: &flash.Progress{Phase: "Writing device trees..."}})
+			req.DTBOptions.Progress = func(done, total int64) {
+				emit(Result{Progress: &flash.Progress{Phase: "Writing device trees...", Done: done, Total: total}})
+			}
+			result.DTBResult, e = firmware.ApplyDTBPack(h.File, d.Size, pack, build, dir, req.DTBOptions)
+			return e
+		}
+		if req.Action == "bootloader-info" || req.Action == "bootloader-apply" {
+			h, err := platform.Open(d, req.Action == "bootloader-apply")
+			if err != nil {
+				return err
+			}
+			defer h.Close()
+			card, err := flash.InspectCard(h.File, d.Size)
+			if err != nil {
+				return err
+			}
+			result.Card = &card
+			build, tab, err := firmware.CardBuildIdentity(h.File, d.Size)
+			if err != nil {
+				return err
+			}
+			result.BuildIdentity = build
+			if req.Action == "bootloader-info" {
+				boot, err := firmware.OpenBoot(h.File, tab, true)
+				if err != nil {
+					return err
+				}
+				setup, err := firmware.ReadCardSetup(boot)
+				result.Setup = &setup
+				return err
+			}
+			if d.Fixed || card.DataCard {
+				return errors.New(firmware.BootloaderOnlySD)
+			}
+			if req.Bootloader == nil {
+				return errors.New("choose a bootloader")
+			}
+			if req.CardFingerprint == "" || card.Fingerprint != req.CardFingerprint || build != req.BootloaderExpected {
+				return errors.New("the card changed; choose it again")
+			}
+			var image *firmware.Image
+			if req.Image != "" && req.Bootloader.Choice == "image" {
+				if req.ImageHash == "" {
+					image, err = firmware.Inspect(context.Background(), req.Image, nil)
+				} else {
+					image, err = firmware.InspectForWrite(context.Background(), req.Image, req.ImageHash)
+				}
+				if err != nil {
+					return err
+				}
+			}
+			data, out, err := firmware.ResolveBootloader(context.Background(), *req.Bootloader, image, dir)
+			result.Bootloader = out
+			if err != nil {
+				return err
+			}
+			if data == nil {
+				return nil
+			}
+			h.Remount = true
+			emit(Result{Progress: &flash.Progress{Phase: "Bootloader", Done: 0, Total: firmware.BootloaderSize}})
+			return firmware.ApplyBootloader(h.File, d.Size, data, *out.Record, build, dir)
 		}
 		if req.Action == "hotfix-list" || req.Action == "hotfix-apply" {
 			h, e := platform.Open(d, req.Action == "hotfix-apply")
@@ -199,6 +337,17 @@ func Worker(job string) error {
 		if e != nil {
 			return e
 		}
+		var freshPack *firmware.DTBPack
+		if req.DTBFile != "" {
+			freshPack, e = firmware.ReadDTBPackReference(req.DTBFile, req.DTBManifest)
+			if e != nil {
+				return e
+			}
+			im, e = firmware.ImageWithDTBPack(im, freshPack, dir)
+			if e != nil {
+				return e
+			}
+		}
 		h, e := platform.Open(d, true)
 		if e != nil {
 			return e
@@ -212,6 +361,20 @@ func Worker(job string) error {
 		}
 		if card.Fingerprint != req.CardFingerprint {
 			return errors.New("card changed after inspection; select it again")
+		}
+		var loader []byte
+		if req.Bootloader != nil {
+			if d.Fixed || card.DataCard {
+				if req.Bootloader.Choice != "" && req.Bootloader.Choice != "image" || req.Bootloader.File != "" {
+					return errors.New(firmware.BootloaderOnlySD)
+				}
+			} else {
+				emit(Result{Progress: &flash.Progress{Phase: "Bootloader"}})
+				loader, result.Bootloader, e = firmware.ResolveBootloader(context.Background(), *req.Bootloader, im, dir)
+				if e != nil {
+					return e
+				}
+			}
 		}
 		if req.ConvertDTB && req.CustomDTB != "" {
 			conv, e := firmware.ConvertCustom(im, req.CustomDTB)
@@ -253,7 +416,25 @@ func Worker(job string) error {
 		if req.Mode == "update" {
 			result.Backup = backup
 		}
-		return flash.Execute(context.Background(), h.File, im, p, boot, backup, func(p flash.Progress) { emit(Result{Progress: &p, Backup: result.Backup}) })
+		if e = flash.Execute(context.Background(), h.File, im, p, boot, backup, func(p flash.Progress) { emit(Result{Progress: &p, Backup: result.Backup}) }); e != nil {
+			return e
+		}
+		if e = firmware.RecordImageSource(h.File, d.Size, im.BuildIdentity, req.ImageSource, dir); e != nil {
+			return e
+		}
+		if freshPack != nil && req.CustomDTB == "" {
+			result.DTBResult, e = firmware.ApplyDTBPack(h.File, d.Size, freshPack, im.BuildIdentity, dir, firmware.DTBOptions{Profile: req.Profile})
+			if e != nil {
+				return e
+			}
+		}
+		if loader != nil {
+			emit(Result{Progress: &flash.Progress{Phase: "Bootloader", Done: 0, Total: firmware.BootloaderSize}})
+			if e = firmware.ApplyBootloader(h.File, d.Size, loader, *result.Bootloader.Record, im.BuildIdentity, dir); e != nil {
+				return e
+			}
+		}
+		return nil
 	}
 	if e := work(); e != nil {
 		result.Error = e.Error()

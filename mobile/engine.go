@@ -178,7 +178,14 @@ func (s *Session) Download(asset string, observer Observer) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	return s.Load(path, observer)
+	loaded, e := s.Load(path, observer)
+	if e != nil {
+		return loaded, e
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.image.Source = a.URL
+	return encode(s.image)
 }
 func InspectDisk(d Disk) (string, error) {
 	dev, e := adapt(d)
@@ -193,17 +200,18 @@ func InspectDisk(d Disk) (string, error) {
 }
 
 type options struct {
-	Mode           string `json:"mode"`
-	Profile        string `json:"profile"`
-	NoROMs         bool   `json:"no_roms"`
-	UserdataGiB    int    `json:"userdata_gib"`
-	Fingerprint    string `json:"fingerprint"`
-	Identity       string `json:"identity"`
-	Custom         string `json:"custom"`
-	CustomAccepted bool   `json:"custom_accepted"`
-	ConvertDTB     bool   `json:"convert_dtb"`
-	System         string `json:"system"`
-	SystemAccepted bool   `json:"system_accepted"`
+	Bootloader     *firmware.BootloaderChoice `json:"bootloader,omitempty"`
+	Mode           string                     `json:"mode"`
+	Profile        string                     `json:"profile"`
+	NoROMs         bool                       `json:"no_roms"`
+	UserdataGiB    int                        `json:"userdata_gib"`
+	Fingerprint    string                     `json:"fingerprint"`
+	Identity       string                     `json:"identity"`
+	Custom         string                     `json:"custom"`
+	CustomAccepted bool                       `json:"custom_accepted"`
+	ConvertDTB     bool                       `json:"convert_dtb"`
+	System         string                     `json:"system"`
+	SystemAccepted bool                       `json:"system_accepted"`
 	// Guest puts the dArkOSen release of GuestOffer on a new card, in its own
 	// partition. DownloadGuest must have fetched it.
 	Guest bool `json:"guest"`
@@ -322,6 +330,12 @@ func (s *Session) plan(d *usbDisk, input string, preview bool) (*flash.Plan, opt
 	if opts.Fingerprint != card.Fingerprint {
 		return nil, opts, errors.New("card changed after inspection; select it again")
 	}
+	if card.DataCard && opts.Bootloader != nil {
+		if opts.Bootloader.Choice != "" && opts.Bootloader.Choice != "image" || opts.Bootloader.File != "" {
+			return nil, opts, errors.New(firmware.BootloaderOnlySD)
+		}
+		opts.Bootloader = nil
+	}
 	if opts.Custom != "" && !opts.CustomAccepted {
 		return nil, opts, errors.New(firmware.CustomWarning)
 	}
@@ -364,13 +378,14 @@ type anchor struct {
 	SHA256 string `json:"sha256"`
 }
 type record struct {
-	Anchors   []anchor `json:"anchors,omitempty"`
-	Directory string   `json:"directory"`
-	Identity  string   `json:"identity"`
-	Size      int64    `json:"size"`
-	Created   string   `json:"created"`
-	Version   string   `json:"version"`
-	Profile   string   `json:"profile"`
+	Bootloader *firmware.BootloaderOutcome `json:"bootloader,omitempty"`
+	Anchors    []anchor                    `json:"anchors,omitempty"`
+	Directory  string                      `json:"directory"`
+	Identity   string                      `json:"identity"`
+	Size       int64                       `json:"size"`
+	Created    string                      `json:"created"`
+	Version    string                      `json:"version"`
+	Profile    string                      `json:"profile"`
 }
 
 func (s *Session) Write(d Disk, input string, observer Observer) (string, error) {
@@ -388,7 +403,19 @@ func (s *Session) Write(d Disk, input string, observer Observer) (string, error)
 	if e != nil {
 		return "", e
 	}
+	ctx, done := s.writeContext()
+	defer done()
+	var loader []byte
+	var outcome *firmware.BootloaderOutcome
+	if opts.Bootloader != nil {
+		emit(observer, flash.Progress{Phase: "Bootloader"})
+		loader, outcome, e = firmware.ResolveBootloader(ctx, *opts.Bootloader, s.image, dir)
+		if e != nil {
+			return "", e
+		}
+	}
 	rec := record{Directory: dir, Identity: d.Identity(), Size: dev.size, Created: time.Now().UTC().Format(time.RFC3339), Version: s.image.Version, Profile: opts.Profile}
+	rec.Bootloader = outcome
 	// Sample both ends of each preserved partition, including its filesystem
 	// identity. Reusing the same USB reader is not enough to identify a card.
 	for _, region := range p.Protected {
@@ -446,13 +473,28 @@ func (s *Session) Write(d Disk, input string, observer Observer) (string, error)
 	}
 	defer os.Remove(boot)
 	backup := filepath.Join(dir, "recovery")
-	ctx, done := s.writeContext()
-	defer done()
 	if e = flash.Execute(ctx, dev, s.image, p, boot, backup, func(p flash.Progress) { emit(observer, p) }); e != nil {
 		if ctx.Err() != nil {
 			e = errors.New(Stopped)
 		}
 		return "", fmt.Errorf("%w\nRecovery: %s", e, dir)
+	}
+	if e = firmware.RecordImageSource(dev, dev.size, s.image.BuildIdentity, s.image.Source, dir); e != nil {
+		return "", e
+	}
+	if s.image.DTBPack != nil && opts.Custom == "" {
+		if _, e = firmware.ApplyDTBPack(dev, dev.size, s.image.DTBPack, s.image.BuildIdentity, dir, firmware.DTBOptions{Profile: opts.Profile}); e != nil {
+			return "", e
+		}
+	}
+	if loader != nil {
+		if e = ctx.Err(); e != nil {
+			return "", errors.New(Stopped)
+		}
+		emit(observer, flash.Progress{Phase: "Bootloader", Done: 0, Total: firmware.BootloaderSize})
+		if e = firmware.ApplyBootloader(dev, dev.size, loader, *outcome.Record, s.image.BuildIdentity, dir); e != nil {
+			return "", e
+		}
 	}
 	return encode(rec)
 }
@@ -590,7 +632,10 @@ func TooOldImage(name string) string {
 	date, _ := firmware.TooOld(name)
 	return date
 }
-func Translate(locale, key string) string { return i18n.Text(locale, key) }
+func Translate(locale, key string) string {
+	key, args := firmware.DTBErrorDetails(key)
+	return i18n.Text(locale, key, args...)
+}
 
 // MinCardBytes is the smallest card a new installation takes (flash.MinCardBytes).
 func MinCardBytes() int64                { return flash.MinCardBytes }

@@ -1,0 +1,18 @@
+[
+  {
+    "repository": "andr36oid/u-boot",
+    "tag": "20261113-0524",
+    "asset": "uboot.img",
+    "size": 4194304,
+    "sha256": "4db68bae2589444fbb4f29fd4ecc4ca5a134593ea0c9bae79483baf0b0e30fdd",
+    "header_sha256": "fdd7e52a304b12d21a60c61a0b3cc30d54657d772c40bab21a3cc2db79400506"
+  },
+  {
+    "repository": "andr36oid/uboot-mainline",
+    "tag": "20261113-0351",
+    "asset": "uboot.img",
+    "size": 4194304,
+    "sha256": "6baadfe09624564543350eb9550d410053a700afadd683f50c9acfdafc227e86",
+    "header_sha256": "b8dbd2c1722c3106c193596fe483c9c7bf5c5a85ebe0f45b0303524baebfe6f3"
+  }
+]

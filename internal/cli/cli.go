@@ -107,18 +107,23 @@ var errNoDrives = errors.New("no removable card readers found. Insert the card a
 // opts carries the parsed flags into the action functions so each one keeps a
 // short signature.
 type opts struct {
-	in          *bufio.Reader
-	cache       string
-	imagePath   string
-	download    bool
-	all         bool
-	drive       string
-	profile     string
-	mode        string
-	recovery    string
-	noROMs      bool
-	userdataGiB int
-	assumeYes   bool
+	in             *bufio.Reader
+	cache          string
+	imagePath      string
+	download       bool
+	all            bool
+	drive          string
+	profile        string
+	mode           string
+	recovery       string
+	noROMs         bool
+	userdataGiB    int
+	assumeYes      bool
+	bootloader     string
+	bootloaderFile string
+	replaceDTBs    bool
+	screenAccepted bool
+	dtbFile        string
 }
 
 func run(version string, args []string, intro func()) (code int) {
@@ -146,17 +151,22 @@ func run(version string, args []string, intro func()) (code int) {
 
 	fs := flag.NewFlagSet(exeName()+" -cli", flag.ContinueOnError)
 	var (
-		action    = fs.String("action", "", `what to do: "flash" (default), "hotfix", "kernel", "restore" or "list"`)
-		imagePath = fs.String("image", "", "path to a release image (.img, .img.xz, .img.gz or .img.zip); flash action")
-		download  = fs.Bool("download", false, "download the release image from GitHub instead of a local file; flash action")
-		all       = fs.Bool("all", false, "also list fixed disks (advanced, dangerous)")
-		modeFlag  = fs.String("mode", "", "install or update; prompted if omitted (flash action)")
-		drive     = fs.String("drive", "", "target drive path to preselect, as shown by -action list (skips the drive menu)")
-		profile   = fs.String("profile", "", "device profile ID or name to preselect; flash action")
-		recovery  = fs.String("recovery", "", "path to the recovery.json (or its folder) from an interrupted update; restore action")
-		noROMs    = fs.Bool("no-roms", false, "use all free space for Android, with no EASYROMS games drive (install only)")
-		userdata  = fs.Int("userdata", 0, "size of the Android userdata area in GiB (0 keeps the default; install only)")
-		assumeYes = fs.Bool("y", false, "skip confirmation prompts where safe (scripting; never for a fixed disk)")
+		acceptScreen = fs.Bool("accept-screen-change", false, "I will watch the screen at the first start")
+		dtbs         = fs.String("dtbs", "", "optional device tree pack for a fresh flash")
+		replaceDTBs  = fs.Bool("replace-anyway", false, "replace hand-edited root DTBs after keeping a copy")
+		loader       = fs.String("bootloader", "", "image, standard or new; optional bootloader choice")
+		loaderFile   = fs.String("bootloader-file", "", "local Rockchip uboot.img; checked before writing")
+		action       = fs.String("action", "", `what to do: "flash" (default), "hotfix", "kernel", "bootloader", "restore" or "list"`)
+		imagePath    = fs.String("image", "", "path to a release image (.img, .img.xz, .img.gz or .img.zip); flash action")
+		download     = fs.Bool("download", false, "download the release image from GitHub instead of a local file; flash action")
+		all          = fs.Bool("all", false, "also list fixed disks (advanced, dangerous)")
+		modeFlag     = fs.String("mode", "", "install or update; prompted if omitted (flash action)")
+		drive        = fs.String("drive", "", "target drive path to preselect, as shown by -action list (skips the drive menu)")
+		profile      = fs.String("profile", "", "device profile ID or name to preselect; flash action")
+		recovery     = fs.String("recovery", "", "path to the recovery.json (or its folder) from an interrupted update; restore action")
+		noROMs       = fs.Bool("no-roms", false, "use all free space for Android, with no EASYROMS games drive (install only)")
+		userdata     = fs.Int("userdata", 0, "size of the Android userdata area in GiB (0 keeps the default; install only)")
+		assumeYes    = fs.Bool("y", false, "skip confirmation prompts where safe (scripting; never for a fixed disk)")
 	)
 	// -cli / --cli are consumed by Requested; accept and ignore them here.
 	fs.Bool("cli", false, "run in text mode (already handled)")
@@ -169,6 +179,9 @@ func run(version string, args []string, intro func()) (code int) {
 
 	intro()
 
+	if len(fs.Args()) > 1 && fs.Args()[0] == "dtbs" && fs.Args()[1] == "info" {
+		return runDTBs(opts{}, fs.Args()[1:])
+	}
 	if err := jobs.HelperAvailable(); err != nil {
 		fmt.Fprintln(os.Stderr, "Cannot start: the disk helper that writes the card is missing.")
 		fmt.Fprintln(os.Stderr, "If you launched this from inside the downloaded zip, unzip the whole")
@@ -186,18 +199,23 @@ func run(version string, args []string, intro func()) (code int) {
 	firmware.CleanWorkDir(cache)
 
 	o := opts{
-		in:          in,
-		cache:       cache,
-		imagePath:   strings.TrimSpace(*imagePath),
-		download:    *download,
-		all:         *all,
-		drive:       strings.TrimSpace(*drive),
-		profile:     strings.TrimSpace(*profile),
-		mode:        strings.ToLower(strings.TrimSpace(*modeFlag)),
-		recovery:    strings.TrimSpace(*recovery),
-		noROMs:      *noROMs,
-		userdataGiB: *userdata,
-		assumeYes:   *assumeYes,
+		in:             in,
+		cache:          cache,
+		imagePath:      strings.TrimSpace(*imagePath),
+		download:       *download,
+		all:            *all,
+		drive:          strings.TrimSpace(*drive),
+		profile:        strings.TrimSpace(*profile),
+		mode:           strings.ToLower(strings.TrimSpace(*modeFlag)),
+		recovery:       strings.TrimSpace(*recovery),
+		noROMs:         *noROMs,
+		userdataGiB:    *userdata,
+		assumeYes:      *assumeYes,
+		bootloader:     strings.TrimSpace(*loader),
+		bootloaderFile: strings.TrimSpace(*loaderFile),
+		replaceDTBs:    *replaceDTBs,
+		screenAccepted: *acceptScreen,
+		dtbFile:        strings.TrimSpace(*dtbs),
 	}
 
 	// "install"/"update" are accepted as actions too, as a shorthand for the
@@ -207,6 +225,9 @@ func run(version string, args []string, intro func()) (code int) {
 		o.mode = act
 		act = "flash"
 	}
+	if len(fs.Args()) > 0 && fs.Args()[0] == "dtbs" {
+		return runDTBs(o, fs.Args()[1:])
+	}
 	switch act {
 	case "", "flash":
 		return runFlash(o)
@@ -214,6 +235,8 @@ func run(version string, args []string, intro func()) (code int) {
 		return runList(o)
 	case "hotfix", "hotfixes":
 		return runHotfix(o)
+	case "bootloader":
+		return runBootloader(o)
 	case "kernel":
 		return runKernel(o)
 	case "restore":
@@ -280,6 +303,19 @@ func runFlash(o opts) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Could not read the image:", err)
 		return 1
+	}
+	if o.dtbFile != "" {
+		pack, e := firmware.ReadDTBPack(o.dtbFile)
+		if e != nil {
+			fmt.Fprintln(os.Stderr, e)
+			return 1
+		}
+		im, e = firmware.ImageWithDTBPack(im, pack, o.cache)
+		if e != nil {
+			fmt.Fprintln(os.Stderr, e)
+			return 1
+		}
+		fmt.Println("Using device trees from", im.DTBVersion)
 	}
 	fmt.Printf("Image: %s  (%s)\n\n", im.Version, humanSize(im.Size))
 
@@ -377,9 +413,23 @@ func runFlash(o opts) int {
 		}
 	}
 
+	if im.DTBPack != nil {
+		for _, choice := range im.Profiles {
+			if choice.ID == profile && !cliConfirmDTBScreen(o, choice.DTBScreenChanged) {
+				return 0
+			}
+		}
+	}
 	// 7. Write.
+	loaderChoice, e := cliBootloader(o)
+	if e != nil {
+		fmt.Fprintln(os.Stderr, e)
+		return 2
+	}
 	req := jobs.Request{
 		Action:          "write",
+		Bootloader:      loaderChoice,
+		DTBFile:         o.dtbFile,
 		Drive:           drive,
 		Image:           im.Path,
 		ImageHash:       im.SHA256,
@@ -406,6 +456,7 @@ func runFlash(o opts) int {
 		return 1
 	}
 	fmt.Println("Done. The card was written and verified.")
+	printBootloader(result.Bootloader)
 	if mode == "update" && result.Backup != "" {
 		fmt.Println("Recovery backup (keep until the console boots):", result.Backup)
 	}

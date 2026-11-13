@@ -7,6 +7,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 )
 
 // The setup is a row of steps. Each step is one page; Back and Next move
@@ -68,6 +69,9 @@ func (s *screen) showStep(step int) {
 		}
 	}
 	s.refreshSteps()
+	if step == stepOptions && s.started && s.bootloaderOptions != nil {
+		s.bootloaderOptions.load()
+	}
 	if step == stepWrite {
 		s.summarize()
 	}
@@ -155,6 +159,17 @@ func (s *screen) summarize() {
 	}
 	set(2, s.profileName())
 	set(3, s.dtbText())
+	if s.bootloaderOptions != nil {
+		if c := s.bootloaderOptions.selection(); c != nil {
+			if c.Build != nil {
+				set(6, s.bootloaderSummary(&firmware.BootloaderRecord{Choice: c.Choice, Version: c.Build.Version, Tag: c.Build.Tag}))
+			} else {
+				set(6, s.t("Bootloader: as in the image"))
+			}
+		} else {
+			set(6, s.t(firmware.BootloaderOnlySD))
+		}
+	}
 	if s.updating {
 		set(4, s.t("Update an existing installation"))
 		if s.system != "" {
@@ -183,7 +198,7 @@ func (s *screen) summarize() {
 	s.action.Refresh()
 }
 
-var summaryKeys = [len(screen{}.sumValues)]string{"Release", "microSD card", "Device profile", "DTB", "Action", "Storage"}
+var summaryKeys = [len(screen{}.sumValues)]string{"Release", "microSD card", "Device profile", "DTB", "Action", "Storage", "Bootloader"}
 
 func (s *screen) summaryForm() *widget.Form {
 	f := widget.NewForm()
@@ -218,6 +233,7 @@ func (s *screen) pagesFor(advanced fyne.CanvasObject) []*fyne.Container {
 			heading(s.t("Choose your console")),
 			wrapped(s.t("Choose the board family first, then the board and screen.")),
 			s.console, s.profileSelect, unknown,
+			s.imageDTBSection(),
 			widget.NewSeparator(),
 			heading(s.t("DTB")),
 			s.customLabel,
@@ -236,6 +252,8 @@ func (s *screen) pagesFor(advanced fyne.CanvasObject) []*fyne.Container {
 			s.guestBox,
 			widget.NewSeparator(),
 			s.systemSection(),
+			widget.NewSeparator(),
+			s.bootloaderSection(),
 		),
 		container.NewVBox(
 			heading(s.t("Check and write")),

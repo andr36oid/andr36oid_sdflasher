@@ -27,6 +27,10 @@ var Version = "development"
 const dataCardFirstStart = "At its first start, it offers to update andr36oid on the eMMC to this release too."
 
 type screen struct {
+	dtbLabel                            *widget.Label
+	dtbFile, dtbManifest, dtbLookup     string
+	bootloaderOptions                   *bootloaderPicker
+	bootloaderChoice                    firmware.BootloaderChoice
 	win                                 fyne.Window
 	locale                              string
 	started                             bool
@@ -75,7 +79,7 @@ type screen struct {
 	guestInfo                           *widget.Label
 	guestBox                            *fyne.Container
 	guestReady                          *flash.Guest // downloaded for the write being confirmed
-	sumValues                           [6]*widget.Label
+	sumValues                           [7]*widget.Label
 	modeHelp                            *widget.Label
 	progress                            *widget.ProgressBar
 	cancel                              context.CancelFunc
@@ -153,7 +157,12 @@ func (s *screen) showHelperMissing() {
 	quit := widget.NewButton(s.t("Quit"), func() { s.win.Close() })
 	s.win.SetContent(container.NewBorder(nil, container.NewHBox(quit), nil, nil, container.NewVBox(title, body)))
 }
-func (s *screen) t(key string, args ...any) string { return i18n.Text(s.locale, key, args...) }
+func (s *screen) t(key string, args ...any) string {
+	if len(args) == 0 {
+		key, args = firmware.DTBErrorDetails(key)
+	}
+	return i18n.Text(s.locale, key, args...)
+}
 
 // busyError: the card's volumes were in use and wouldn't unmount (platform.BusyPrefix)
 func busyError(e error) (string, bool) {
@@ -284,7 +293,7 @@ func (s *screen) build() {
 	s.action.Disable()
 	s.progress = widget.NewProgressBar()
 	s.progress.Hide()
-	s.sumValues = [6]*widget.Label{}
+	s.sumValues = [7]*widget.Label{}
 	s.pages = s.pagesFor(advanced)
 	s.populateImage()
 	s.profile = oldProfile
@@ -328,15 +337,17 @@ func (s *screen) build() {
 	// are quiet low-importance buttons in two compact rows below a separator.
 	hotfix := widget.NewButton(s.t("Apply hotfixes"), s.chooseHotfixCard)
 	kernel := widget.NewButton(s.t("Check for kernel update"), s.chooseKernelCard)
+	loader := widget.NewButton(s.t("Bootloader"), s.chooseBootloaderCard)
+	dtbs := widget.NewButton(s.t("Update device trees"), s.chooseDTBPackCard)
 	restore := widget.NewButton(s.t("Restore an interrupted update…"), s.recover)
-	for _, b := range []*widget.Button{hotfix, kernel, restore, s.cacheClear} {
+	for _, b := range []*widget.Button{hotfix, kernel, dtbs, loader, restore, s.cacheClear} {
 		b.Importance = widget.LowImportance
 	}
 	footer := container.NewVBox(
 		widget.NewSeparator(),
 		container.NewBorder(nil, nil, s.back, s.next),
 		widget.NewSeparator(),
-		container.NewGridWithColumns(3, hotfix, kernel, restore),
+		container.NewGridWithColumns(3, hotfix, container.NewVBox(kernel, dtbs, loader), restore),
 		container.NewBorder(nil, nil, s.cacheClear, widget.NewLabel("GPLv3 · "+Version), s.cacheLabel))
 	s.showCacheUsage(cacheTotal())
 	s.home = container.NewPadded(container.NewBorder(header, footer, nil, nil, container.NewVScroll(container.NewStack(pages...))))
@@ -352,6 +363,9 @@ func (s *screen) ready() {
 		s.action.Enable()
 	} else {
 		s.action.Disable()
+	}
+	if s.bootloaderOptions != nil {
+		s.bootloaderOptions.setTarget(s.im != nil, s.drive != nil && s.drive.Fixed || s.card != nil && s.card.DataCard)
 	}
 	s.refreshGuest()
 	s.refreshStorage()
@@ -494,7 +508,7 @@ func (s *screen) chooseImage() {
 	}
 	d.Show()
 }
-func (s *screen) loadImage(p string) {
+func (s *screen) loadImage(p string, origin ...string) {
 	// a build too old for this flasher: refused by its name, before it is unpacked
 	if date, old := firmware.TooOld(p); old {
 		s.releaseLabel.SetText(s.t("Image rejected. Choose an andr36oid Treble release."))
@@ -533,6 +547,9 @@ func (s *screen) loadImage(p string) {
 				s.releaseLabel.SetText(s.t("Image rejected. Choose an andr36oid Treble release."))
 				s.showError(e)
 				return
+			}
+			if len(origin) > 0 {
+				im.Source = origin[0]
 			}
 			s.im = im
 			s.populateImage()
@@ -601,6 +618,7 @@ func (s *screen) populateImage() {
 	s.console.SetOptions(opts)
 	s.console.ClearSelected()
 	s.lookupGuest()
+	s.lookupImageDTBs()
 }
 
 // driveLabel is a drive as the list shows it: fixed disks are marked
@@ -853,7 +871,7 @@ func (s *screen) download(a catalog.Asset) {
 				s.showError(e)
 				return
 			}
-			s.loadImage(p)
+			s.loadImage(p, a.URL)
 		})
 	}()
 }
@@ -900,14 +918,14 @@ func (s *screen) confirm() {
 	if s.drive.Fixed {
 		s.agreeDialog(s.t("Write to a disk that is not a removable card?"), s.t("%s is not a removable card. If it is the wrong disk, what is on it is destroyed and cannot be recovered. Check the name and the size once more before you go on.", s.drive.Label())+"\n\n"+msg, s.t("This is the right disk. Write to it."), func(ok bool) {
 			if ok {
-				s.write(p)
+				s.writeWithDTBWarning(p)
 			}
 		})
 		return
 	}
 	s.confirmDialog(title, msg, func(ok bool) {
 		if ok {
-			s.write(p)
+			s.writeWithDTBWarning(p)
 		}
 	}, s.win)
 }
@@ -962,6 +980,11 @@ func (s *screen) write(p *flash.Plan) {
 	s.win.SetContent(container.NewPadded(container.NewBorder(container.NewVBox(title, widget.NewLabel(s.drive.Label()), widget.NewSeparator()), back, nil, nil,
 		container.NewVScroll(container.NewVBox(phase, bar, outcome, m.img, legend(s.locale), details, eject, waiting)))))
 	req := jobs.Request{Action: "write", Drive: *s.drive, Image: s.im.Path, ImageHash: s.im.SHA256, CardFingerprint: s.card.Fingerprint, Mode: p.Mode, Profile: s.profile, NoROMs: p.NoROMs, UserdataGiB: p.UserdataGiB, CustomDTB: s.custom, CustomAccepted: s.customAccepted, ConvertDTB: s.convert, SystemImage: s.system, SystemAccepted: s.systemAccepted}
+	req.DTBFile = s.dtbFile
+	req.DTBManifest = s.dtbManifest
+	if s.bootloaderOptions != nil {
+		req.Bootloader = s.bootloaderOptions.selection()
+	}
 	req.ImageSource = s.im.Source
 	req.Guest = p.Guest
 	var speed *flash.CardSpeed
@@ -1013,6 +1036,18 @@ func (s *screen) write(p *flash.Plan) {
 					outcome.SetText(s.t("This card is slow. Android runs from the card, so apps may start slowly and games may stutter. For a smooth experience, use a card from a known brand marked A1 or A2.") + "\n" + outcome.Text)
 					outcome.Importance = widget.WarningImportance
 				}
+				outcome.Show()
+			}
+			if result.Bootloader != nil {
+				line := s.bootloaderSummary(result.Bootloader.Record)
+				if result.Bootloader.Warning != "" {
+					line = s.t(result.Bootloader.Warning) + "\n" + line
+					outcome.Importance = widget.WarningImportance
+				}
+				if outcome.Text != "" {
+					line = outcome.Text + "\n" + line
+				}
+				outcome.SetText(line)
 				outcome.Show()
 			}
 			if p.Mode == "install" {

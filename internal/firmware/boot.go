@@ -76,6 +76,18 @@ func PrepareBoot(im *Image, profile string, noROMs, updating bool, custom, dir s
 	if e != nil {
 		return "", e
 	}
+	if im.DTBPack != nil {
+		setup, e := ReadCardSetup(fs)
+		if e != nil {
+			return "", e
+		}
+		if e = im.DTBPack.compatible(setup); e != nil {
+			return "", e
+		}
+		if e = writeImageDTBPack(fs, im.DTBPack, setup.KernelLine); e != nil {
+			return "", e
+		}
+	}
 	var conv *Conversion
 	if custom != "" && len(opts) > 0 && opts[0].ConvertDTB {
 		input, e := readCustom(custom)

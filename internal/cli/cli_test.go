@@ -70,7 +70,7 @@ func TestParseHotfixSelection(t *testing.T) {
 		{"1 3", true, []string{"fix1.zip", "fix3.zip"}},
 		{"2", true, []string{"extra2.zip"}},
 		{"3 1 1", true, []string{"fix1.zip", "fix3.zip"}}, // list order, deduped
-		{"", true, nil},                                   // no tokens -> empty selection
+		{"", true, nil}, // no tokens -> empty selection
 		{"0", false, nil},
 		{"4", false, nil},
 		{"x", false, nil},

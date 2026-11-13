@@ -25,9 +25,10 @@ import (
 )
 
 type Profile struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Console string `json:"console"`
+	DTBScreenChanged bool   `json:"dtb_screen_changed,omitempty"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Console          string `json:"console"`
 	// Other consoles whose list shows it too, e.g. a V12 wired like the G80
 	AlsoFor      []string `json:"also_for,omitempty"`
 	Experimental bool     `json:"experimental"`
@@ -36,6 +37,8 @@ type Profile struct {
 	Hash         string   `json:"hash"`
 }
 type Image struct {
+	DTBVersion    string       `json:"dtb_version,omitempty"`
+	DTBPack       *DTBPack     `json:"-"`
 	Source        string       `json:"source,omitempty"`
 	Path          string       `json:"path"`
 	Size          int64        `json:"size"`
@@ -62,10 +65,20 @@ func ReadFile(fs filesystem.FileSystem, name string, limit int64) ([]byte, error
 		return nil, e
 	}
 	defer f.Close()
-	b, e := io.ReadAll(io.LimitReader(f, limit+1))
-	if int64(len(b)) > limit {
+	st, e := f.Stat()
+	if e != nil {
+		return nil, e
+	}
+	if st.IsDir() || st.Size() < 0 {
+		return nil, fmt.Errorf("%s is not a regular file", name)
+	}
+	if st.Size() > limit || st.Size() > int64(^uint(0)>>1) {
 		return nil, fmt.Errorf("%s exceeds the allowed size", name)
 	}
+	// FAT's partial-cluster reader can return padding when asked past EOF.
+	// Read exactly the directory entry's bounded length, including the tail.
+	b := make([]byte, int(st.Size()))
+	_, e = io.ReadFull(f, b)
 	return b, e
 }
 func OpenBoot(f io.ReaderAt, t layout.Table, readOnly bool) (*fat32.FileSystem, error) {

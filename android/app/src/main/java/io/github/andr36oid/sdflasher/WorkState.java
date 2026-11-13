@@ -18,6 +18,39 @@ final class WorkState {
   static volatile JSONObject appUpdate;
   static boolean updateCheckStarted, updateShown;
   static volatile JSONObject image, card, progress, plan, speed;
+  static volatile org.json.JSONArray bootloaderOffers;
+  static volatile boolean bootloaderLookup, bootloaderFailed, choosingBootloaderCard;
+  static volatile JSONObject bootloaderInfo;
+  static volatile UsbCard bootloaderTarget;
+  static volatile String bootloaderChoice = "image";
+  static synchronized void lookupBootloaders() {
+    if (bootloaderLookup) return;
+    bootloaderLookup = true;
+    new Thread(() -> {
+      try { bootloaderOffers = new org.json.JSONArray(engine.bootloaderOffers()); }
+      catch (Exception e) { bootloaderFailed = true; bootloaderChoice = "image"; }
+      revision++;
+    }, "bootloader-builds").start();
+  }
+  static JSONObject bootloaderOptions() throws Exception {
+    JSONObject choice = new JSONObject().put("choice", bootloaderChoice);
+    if (!"image".equals(bootloaderChoice) && bootloaderOffers != null)
+      for (int n=0; n<bootloaderOffers.length(); n++) {
+        JSONObject build=bootloaderOffers.getJSONObject(n);
+        if (bootloaderChoice.equals(build.optString("choice"))) choice.put("build",build);
+      }
+    return choice;
+  }
+  static volatile boolean choosingDTBCard, dtbSourcePending,dtbMessagePending;
+ static volatile String dtbMessageTitle="",dtbMessageBody="";
+  static volatile JSONObject dtbCardInfo, dtbPreview, dtbOnlineOffer;
+  static volatile UsbCard dtbTarget;
+  static volatile String dtbIdentity="",dtbFile="",dtbRequest="",dtbLookupKey="";
+  static synchronized void lookupImageDTBs() {
+    if(image==null||busy)return;
+    String key=image.optString("sha256")+image.optString("path");if(key.equals(dtbLookupKey))return;dtbLookupKey=key;
+    new Thread(()->{try{JSONObject offer=new JSONObject(engine.findImageDTBs());if(image!=null&&key.equals(image.optString("sha256")+image.optString("path"))){dtbOnlineOffer=offer;revision++;}}catch(Exception ignored){}},"device-tree-set").start();
+  }
   static volatile JSONObject guestOffer;
   static volatile boolean guest;
   private static JSONObject guestLookupImage;
@@ -74,6 +107,7 @@ final class WorkState {
 
   static void clearImage() {
     image = null;
+ dtbLookupKey="";dtbOnlineOffer=null;
     guestOffer = null;
     guest = false;
     guestLookupImage = null;
@@ -230,6 +264,7 @@ final class WorkState {
         .put("profile", profile)
         .put("no_roms", noROMs)
         .put("guest", guestSelected())
+        .put("bootloader", card.optBoolean("data_card") ? JSONObject.NULL : bootloaderOptions())
         .put("userdata_gib", update || noROMs ? 0 : userdataGiB)
         .put("custom", custom)
         .put("custom_accepted", customAccepted)
