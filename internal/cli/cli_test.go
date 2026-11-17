@@ -3,9 +3,11 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/platform"
 )
 
 func TestRequested(t *testing.T) {
@@ -130,5 +132,13 @@ func TestResolveRecovery(t *testing.T) {
 	// A missing path is rejected.
 	if _, err := resolveRecovery(nil, filepath.Join(dir, "nope")); err == nil {
 		t.Error("resolveRecovery on a missing path should fail")
+	}
+}
+
+// A write-protected card is shown with the reason and can't be picked by -drive.
+func TestWriteProtectedDriveLabel(t *testing.T) {
+	d := platform.Drive{Path: "/dev/sdx", Name: "Reader", Size: 32e9, WriteProtected: true}
+	if !strings.Contains(driveLabel(d), "slide the lock switch") {
+		t.Fatal(driveLabel(d))
 	}
 }

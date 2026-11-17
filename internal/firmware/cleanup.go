@@ -13,7 +13,8 @@ import (
 const recentWindow = 15 * time.Minute
 
 // CleanWorkDir drops the scratch the flasher leaves in its cache directory:
-// decompressed images (image-*.img), half-finished downloads (download-*), and
+// decompressed images (image-*.img), half-finished downloads (download-*) and
+// game system unpacks (darkosen-*.part, catalog.unpackGuest), and
 // spent operation directories. It is meant to run at startup, when nothing of
 // this instance's is in use, so those files are safe to remove. Two things are
 // kept: a recovery backup (an operation directory holding a non-empty recovery/
@@ -34,7 +35,8 @@ func CleanWorkDir(dir string) {
 			continue
 		}
 		switch {
-		case !en.IsDir() && (strings.HasPrefix(name, "image-") || strings.HasPrefix(name, "download-")):
+		case !en.IsDir() && (strings.HasPrefix(name, "image-") || strings.HasPrefix(name, "download-") ||
+			strings.HasPrefix(name, "darkosen-") && strings.HasSuffix(name, ".part")):
 			os.Remove(full)
 		case en.IsDir() && strings.HasPrefix(name, "operation-"):
 			if hasEntries(filepath.Join(full, "recovery")) {

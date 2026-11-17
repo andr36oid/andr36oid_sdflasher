@@ -145,13 +145,22 @@ func list(all bool) ([]Drive, error) {
 	if e != nil {
 		return nil, e
 	}
+	return drives(bs, all), nil
+}
+
+// drives are the disks of lsblk's list that are offered.
+func drives(bs []block, all bool) []Drive {
 	var out []Drive
 	for _, b := range bs {
 		fixed := !b.RM && b.Tran != "usb" && !sdSlot(b)
-		if b.Type != "disk" || b.RO || (fixed && (!all || inUse(b) || virtual(b) || claimed(b))) || critical(b) || b.Size < 1<<30 {
+		// a card with its lock switch on is read only; it is listed (not usable), a
+		// read-only fixed disk is not
+		if b.Type != "disk" || (fixed && (b.RO || !all || inUse(b) || virtual(b) || claimed(b))) || critical(b) || b.Size < 1<<30 {
 			continue
 		}
-		d := Drive{Path: b.Path, Name: strings.TrimSpace(b.Model), Serial: strings.TrimSpace(b.Serial), Size: b.Size, SectorSize: b.Sector, Fixed: fixed}
+		d := Drive{Path: b.Path, Name: strings.TrimSpace(b.Model), Serial: strings.TrimSpace(b.Serial), Size: b.Size, SectorSize: b.Sector, Fixed: fixed, WriteProtected: b.RO,
+			// USB hard drives and SSDs are not removable; card readers are
+			External: b.Tran == "usb" && !b.RM}
 		if d.Name == "" {
 			d.Name = b.Name
 		}
@@ -170,12 +179,15 @@ func list(all bool) ([]Drive, error) {
 		add(b)
 		out = append(out, d)
 	}
-	return out, nil
+	return out
 }
 func Open(d Drive, write bool) (*Handle, error) {
 	d, e := Revalidate(d)
 	if e != nil {
 		return nil, e
+	}
+	if write && d.WriteProtected {
+		return nil, errWriteProtected
 	}
 	if write {
 		for _, v := range d.Volumes {

@@ -263,6 +263,7 @@ func (s *screen) pagesFor(advanced fyne.CanvasObject) []*fyne.Container {
 			widget.NewSeparator(),
 			s.help,
 			s.action,
+			s.buildGuestWork(),
 		),
 	}
 	return pages

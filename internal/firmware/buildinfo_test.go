@@ -189,3 +189,33 @@ func TestPrepareBootKeepsHotfixes(t *testing.T) {
 		f.Close()
 	}
 }
+
+// An update writes the card's game system record and layout record back byte for
+// byte: the console reads its game system, which the update keeps, from them.
+func TestPrepareBootKeepsGameSystemRecords(t *testing.T) {
+	dir := t.TempDir()
+	im := fakeImage(t, dir)
+	keep := map[string][]byte{
+		"andr36oid-darkosen.json": []byte(`{"format":1,"distribution":"dArkOS","darkosen":"11072026","revision":1,"minimum_andr36oid":"","image":{"name":"dArkOS_RG351MP_11072026.erofs.img","size":4096,"sha256":"3fb4e665805d2356c5b4c34862023d57e25bf9e90c8a6e2e73c18f23891adb46"}}` + "\n"),
+		"andr36oid-layout.txt":    []byte("prepared-1\nuserdata 5701632 9000000\nDARKOS 9000001 9999966\n"),
+	}
+	out, e := PrepareBoot(im, "Panels/Panel4", false, true, "", dir, BootOptions{Keep: keep})
+	if e != nil {
+		t.Fatal(e)
+	}
+	f, e := os.Open(out)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer f.Close()
+	st, _ := f.Stat()
+	bfs, e := fat32.Read(file.New(f, true), st.Size(), 0, 512)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for name, want := range keep {
+		if got, e := ReadFile(bfs, "/"+name, 1<<20); e != nil || string(got) != string(want) {
+			t.Errorf("%s is %q, %v", name, got, e)
+		}
+	}
+}

@@ -30,7 +30,10 @@ var UBootDTBNames = []string{
 // Tweaks (andr36oid's Settings > System > Kernel Tweaks) saves the kernel command line
 // additions there, the refresh rates the panel may use among them. The data card
 // marker of an eMMC install stays too: the card's next start offers to update the eMMC.
-var KeptFiles = []string{"kernel-tweaks.txt", "andr36oid-datacard.txt"}
+// So do the flasher's own records of a prepared card (flash.LayoutFile and
+// flash.GuestFile): the console reads the game system in its partition, which an
+// update keeps, from them, byte for byte as they were.
+var KeptFiles = []string{"kernel-tweaks.txt", "andr36oid-datacard.txt", "andr36oid-layout.txt", "andr36oid-darkosen.json"}
 
 // KeptDirs are folders on BOOT whose files are the user's too: andr36oid's hotfixes
 // (.fix.zip), carried over on an update as "<folder>/<file>" in BootOptions.Keep. Files

@@ -171,28 +171,45 @@ func TestCancelReachesOnlyTheArmedWrite(t *testing.T) {
 	}
 }
 
-// A plan only gets dArkOSen when the release offered for the loaded image was
-// downloaded, and only for a newly written card; another image forgets it.
+// A plan only gets a game system when the release offered for the loaded image was
+// downloaded, and only for a newly written card; another image forgets it. The older
+// "guest": true still means dArkOSen.
 func TestGuestChoice(t *testing.T) {
-	g := &catalog.GuestRelease{Darkosen: "11112026", Revision: 1, PartitionBytes: 4 << 30}
+	g := &catalog.GuestRelease{Distribution: "dArkOSen", Darkosen: "11112026", Revision: 1, PartitionBytes: 4 << 30}
 	g.Image.Name, g.Image.Size, g.Image.SHA256 = "darkosen.erofs.img", 1<<20, strings.Repeat("a", 64)
-	s := &Session{image: &firmware.Image{SHA256: "one"}, guest: g, guestFor: "one"}
-	if got, e := s.guestChoice(options{Mode: "install"}); got != nil || e != nil {
-		t.Fatal("dArkOSen without being asked", got, e)
+	dk := &catalog.GuestRelease{Distribution: "dArkOS", Darkosen: "11072026", Revision: 1, PartitionBytes: 5 << 30}
+	dk.Image.Name, dk.Image.Size, dk.Image.SHA256 = "dArkOS_RG351MP_11072026.erofs.img", 1<<20, strings.Repeat("b", 64)
+	s := &Session{image: &firmware.Image{SHA256: "one"}, guests: map[string]*catalog.GuestRelease{"dArkOSen": g, "dArkOS": dk}, guestPaths: map[string]string{}, guestFor: "one"}
+	for _, none := range []options{{Mode: "install"}, {Mode: "install", GuestSystem: "none"}, {Mode: "install", GuestSystem: "None", Guest: true}} {
+		if got, e := s.guestChoice(none); got != nil || e != nil {
+			t.Fatal("a system without being asked", none, got, e)
+		}
+	}
+	if _, e := s.guestChoice(options{Mode: "install", GuestSystem: "ArkOS"}); e == nil {
+		t.Fatal("unknown system accepted")
 	}
 	if _, e := s.guestChoice(options{Mode: "install", Guest: true}); e == nil {
 		t.Fatal("accepted before the download")
 	}
-	s.guestPath = "/tmp/darkosen.erofs.img"
+	s.guestPaths["dArkOSen"] = "/tmp/darkosen.erofs.img"
 	if _, e := s.guestChoice(options{Mode: "update", Guest: true}); e == nil {
 		t.Fatal("accepted for an update")
 	}
-	got, e := s.guestChoice(options{Mode: "install", Guest: true})
-	if e != nil || got.Path != s.guestPath || got.SHA256 != g.Image.SHA256 || got.PartitionBytes != g.PartitionBytes {
+	if _, e := s.guestChoice(options{Mode: "install", GuestSystem: "dArkOS"}); e == nil {
+		t.Fatal("dArkOS taken for the dArkOSen download")
+	}
+	for _, o := range []options{{Mode: "install", Guest: true}, {Mode: "install", GuestSystem: "darkosen"}} {
+		got, e := s.guestChoice(o)
+		if e != nil || got.Path != s.guestPaths["dArkOSen"] || got.SHA256 != g.Image.SHA256 || got.PartitionBytes != g.PartitionBytes || got.Distribution != "dArkOSen" {
+			t.Fatal(got, e)
+		}
+	}
+	s.guestPaths["dArkOS"] = "/tmp/darkos.erofs.img"
+	if got, e := s.guestChoice(options{Mode: "install", GuestSystem: "dArkOS"}); e != nil || got.Distribution != "dArkOS" || got.Path != "/tmp/darkos.erofs.img" {
 		t.Fatal(got, e)
 	}
 	s.image = &firmware.Image{SHA256: "two"}
-	if _, e := s.guestChoice(options{Mode: "install", Guest: true}); e == nil || s.guest != nil || s.guestPath != "" {
+	if _, e := s.guestChoice(options{Mode: "install", Guest: true}); e == nil || s.guests != nil || s.guestPaths != nil {
 		t.Fatal("kept the download of another release")
 	}
 }

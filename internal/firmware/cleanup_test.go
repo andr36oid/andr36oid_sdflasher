@@ -125,3 +125,18 @@ func TestWorkDirUsageAndClear(t *testing.T) {
 		t.Fatalf("after full clear total = %d, want 0", total)
 	}
 }
+
+// A game system being unpacked when the flasher was killed leaves a darkosen-*.part
+// of several GB (catalog.unpackGuest); the next start drops it like a half download.
+// The unpacked image itself (<digest>-name) is the reusable cache and stays.
+func TestCleanWorkDirDropsHalfUnpackedGameSystem(t *testing.T) {
+	dir := t.TempDir()
+	part := filepath.Join(dir, "darkosen-123456.part")
+	image := filepath.Join(dir, "abcd-dArkOS_RG351MP_11072026.erofs.img")
+	write(t, part)
+	write(t, image)
+	backdate(t, dir)
+	CleanWorkDir(dir)
+	gone(t, part)
+	present(t, image)
+}

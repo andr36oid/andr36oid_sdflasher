@@ -127,6 +127,7 @@ type opts struct {
 	replaceDTBs      bool
 	screenAccepted   bool
 	dtbFile          string
+	gameSystem       string
 }
 
 func run(version string, args []string, intro func()) (code int) {
@@ -174,6 +175,7 @@ func run(version string, args []string, intro func()) (code int) {
 		noROMs        = fs.Bool("no-roms", false, "use all free space for Android, with no EASYROMS games drive (install only)")
 		userdata      = fs.Int("userdata", 0, "size of the Android userdata area in GiB (0 keeps the default; install only)")
 		assumeYes     = fs.Bool("y", false, "skip confirmation prompts where safe (scripting; never for a fixed disk)")
+		gameSystem    = fs.String("game-system", "", "dArkOS, dArkOSRE, dArkOSen or none: the game system put on a new card; prompted (default dArkOS) if omitted; with -y and no -game-system, none (install only)")
 	)
 	// -cli / --cli are consumed by Requested; accept and ignore them here.
 	fs.Bool("cli", false, "run in text mode (already handled)")
@@ -232,6 +234,11 @@ func run(version string, args []string, intro func()) (code int) {
 		replaceDTBs:    *replaceDTBs,
 		screenAccepted: *acceptScreen,
 		dtbFile:        strings.TrimSpace(*dtbs),
+		gameSystem:     strings.TrimSpace(*gameSystem),
+	}
+	if _, ok := catalog.ParseGuestChoice(o.gameSystem); !ok {
+		fmt.Fprintf(os.Stderr, "Unknown -game-system %q. Use dArkOS, dArkOSRE, dArkOSen or none.\n", o.gameSystem)
+		return 2
 	}
 
 	// "install"/"update" are accepted as actions too, as a shorthand for the
@@ -401,6 +408,26 @@ func runFlash(o opts) int {
 		userdataGiB = 0
 	}
 
+	// A game system goes on a new card of a release that runs one from its own
+	// partition; one is chosen now, more are added later on the console.
+	var guestRelease *catalog.GuestRelease
+	if mode == "install" && im.Subsystem() && o.assumeYes && o.gameSystem == "" {
+		// -y alone puts no system on the card (chooseGuest), so don't look any up
+		fmt.Println("Game system: none (-y without -game-system).")
+		fmt.Println()
+	} else if mode == "install" && im.Subsystem() {
+		fmt.Println("Looking for game systems...")
+		guestRelease, err = chooseGuest(o.in, lookupGuests(im, drive.Size, userdataGiB, noROMs), o.gameSystem, o.assumeYes)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Println()
+	} else if g, _ := catalog.ParseGuestChoice(o.gameSystem); g != catalog.NoGuest {
+		fmt.Fprintln(os.Stderr, "A game system only goes on a new card (install) of a release that runs one from its own partition.")
+		return 1
+	}
+
 	// 6. Confirm.
 	section(5, "Check and write")
 	fmt.Println("About to write:")
@@ -414,15 +441,21 @@ func runFlash(o opts) int {
 		} else if userdataGiB > 0 {
 			fmt.Printf("  Storage : %d GiB Android userdata, the rest to EASYROMS\n", userdataGiB)
 		}
+		if guestRelease != nil {
+			fmt.Printf("  System  : %s %s (%s download)\n", guestRelease.Source.Display, guestRelease.Darkosen, humanSize(guestRelease.DownloadBytes()))
+		}
 		fmt.Println("  WARNING : an install ERASES EVERYTHING on this card.")
 	}
 	if drive.Fixed {
 		fmt.Println("  WARNING : this is NOT a removable card. If it is the wrong disk, everything")
 		fmt.Println("            on it (files, other operating systems, backups) is gone for good.")
 		fmt.Println("            Check the name and the size once more before you go on.")
+	} else if drive.Large() {
+		fmt.Printf("  WARNING : %s (%.0f GB) is larger than most SD cards, or it says it is a\n", drive.Name, float64(drive.Size)/1e9)
+		fmt.Println("            hard drive. If it is not your SD card, everything on it is lost.")
 	}
-	// -y is for scripting a card reader; a fixed disk always asks.
-	if !o.assumeYes || drive.Fixed {
+	// -y is for scripting a card reader; a fixed disk or a large drive always asks.
+	if !o.assumeYes || drive.Fixed || drive.Large() {
 		fmt.Println()
 		fmt.Printf("Type the target path (%s) to confirm, or anything else to abort: ", drive.Path)
 		if !strings.EqualFold(strings.TrimSpace(readLine(o.in)), drive.Path) {
@@ -454,7 +487,15 @@ func runFlash(o opts) int {
 			return 1
 		}
 	}
+	var guest *flash.Guest
+	if guestRelease != nil {
+		if guest, e = downloadGuest(guestRelease, o.cache); e != nil {
+			fmt.Fprintln(os.Stderr, "Could not download "+guestRelease.Source.Display+":", e)
+			return 1
+		}
+	}
 	req := jobs.Request{
+		Guest:           guest,
 		Action:          "write",
 		Bootloader:      loaderChoice,
 		DTBFile:         o.dtbFile,
@@ -477,6 +518,10 @@ func runFlash(o opts) int {
 			fmt.Fprintln(os.Stderr, "The card is in use ("+what+"). Close anything using it and try again.")
 		} else {
 			fmt.Fprintln(os.Stderr, "The write failed:", err)
+			if hints := failureHints(err); len(hints) > 0 {
+				fmt.Fprintln(os.Stderr)
+				fmt.Fprintln(os.Stderr, strings.Join(hints, "\n"))
+			}
 		}
 		if result.Backup != "" {
 			fmt.Fprintln(os.Stderr, "Recovery backup, if the card already had an install:", result.Backup)
@@ -797,17 +842,37 @@ func pickDrive(in *bufio.Reader, all bool, want string) (platform.Drive, error) 
 	if want != "" {
 		for _, d := range drives {
 			if strings.EqualFold(strings.TrimSpace(d.Path), want) {
+				if d.WriteProtected {
+					return platform.Drive{}, fmt.Errorf("%s can't be used: %s", d.Path, platform.WriteProtectedReason)
+				}
 				fmt.Printf("Selected: %s\n\n", driveLabel(d))
 				return d, nil
 			}
 		}
 		return platform.Drive{}, fmt.Errorf("no listed drive has the path %q; run with -action list to see the paths", want)
 	}
+	usable := 0
+	for _, d := range drives {
+		if !d.WriteProtected {
+			usable++
+		}
+	}
+	if usable == 0 {
+		for _, d := range drives {
+			fmt.Printf("  %s\n", driveLabel(d))
+		}
+		return platform.Drive{}, fmt.Errorf("no listed card can be written: %s", platform.WriteProtectedReason)
+	}
 	fmt.Println("Detected drives:")
 	for i, d := range drives {
 		fmt.Printf("  [%d] %s\n", i+1, driveLabel(d))
 	}
 	d := drives[chooseIndex(in, "Choose the card", len(drives))]
+	for d.WriteProtected {
+		// listed so that people find their card, never written
+		fmt.Printf("That card can't be used: %s.\n", platform.WriteProtectedReason)
+		d = drives[chooseIndex(in, "Choose the card", len(drives))]
+	}
 	fmt.Printf("Selected: %s\n\n", driveLabel(d))
 	return d, nil
 }
@@ -815,10 +880,14 @@ func pickDrive(in *bufio.Reader, all bool, want string) (platform.Drive, error) 
 // driveLabel is a drive as the list shows it: a fixed disk (only listed with
 // -all) is marked, as in the graphical app, so it can't be mistaken for a card.
 func driveLabel(d platform.Drive) string {
+	label := d.Label()
 	if d.Fixed {
-		return "NOT a removable card: " + d.Label()
+		label = "NOT a removable card: " + label
 	}
-	return d.Label()
+	if d.WriteProtected {
+		label += " (" + platform.WriteProtectedReason + ")"
+	}
+	return label
 }
 
 // chooseProfile selects a device profile. A preselect (from -profile) matching

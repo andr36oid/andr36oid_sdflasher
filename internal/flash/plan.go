@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
@@ -27,7 +28,7 @@ type Write struct {
 	Boot         bool   `json:"boot"`
 	System       bool   `json:"system,omitempty"`
 	Data         []byte `json:"data,omitempty"`
-	// Zero writes zeros; Guest writes from the plan's dArkOSen image.
+	// Zero writes zeros; Guest writes from the plan's game system image.
 	Zero  bool `json:"zero,omitempty"`
 	Guest bool `json:"guest,omitempty"`
 }
@@ -47,9 +48,15 @@ type Plan struct {
 	// Keep are the user's files on the old BOOT that an update writes again.
 	Keep map[string][]byte `json:"keep,omitempty"`
 	// Prepared: the flasher makes userdata, the bundled apps and the games partition
-	// itself (prepared.go). Guest is the dArkOSen release that gets its own partition.
-	Prepared bool   `json:"prepared,omitempty"`
-	Guest    *Guest `json:"guest,omitempty"`
+	// itself (prepared.go). Guest is the game system release that gets its own
+	// partition; GuestDistribution says the release's console reads "distribution"
+	// in GuestFile (ReadsDistribution).
+	// Probes are the few places an installation writes markers to before anything
+	// else, to see that the card holds what it claims (capacity.go).
+	Probes            []Range `json:"probes,omitempty"`
+	Prepared          bool    `json:"prepared,omitempty"`
+	Guest             *Guest  `json:"guest,omitempty"`
+	GuestDistribution bool    `json:"guest_distribution,omitempty"`
 }
 type Card struct {
 	Table       layout.Table `json:"table"`
@@ -64,6 +71,40 @@ type Card struct {
 	Reason   string `json:"reason,omitempty"`
 	// Kept are the firmware.KeptFiles found on its BOOT.
 	Kept map[string][]byte `json:"kept,omitempty"`
+	// Guest is the game system in the card's own partition, nil for none. An update
+	// keeps it as it is.
+	Guest *CardGuest `json:"guest,omitempty"`
+}
+
+// CardGuest is what a card's record (GuestFile) says of its game system.
+type CardGuest struct {
+	// Distribution is the system's name ("dArkOS", "dArkOSRE", "dArkOSen"), "" when
+	// the card has the partition but no readable record of it.
+	Distribution string `json:"distribution,omitempty"`
+	// Version is the release (MMDDYYYY), "" when not known.
+	Version string `json:"version,omitempty"`
+}
+
+// cardGuest reads the record of a card that has the game system partition.
+func cardGuest(record []byte) *CardGuest {
+	g := &CardGuest{}
+	var r struct {
+		Distribution *string `json:"distribution"`
+		Darkosen     string  `json:"darkosen"`
+	}
+	if len(record) == 0 || json.Unmarshal(record, &r) != nil {
+		return g
+	}
+	// a record without the field is dArkOSen's (RECORD-FORMAT)
+	name := "dArkOSen"
+	if r.Distribution != nil {
+		name = (&Guest{Distribution: *r.Distribution}).DistributionName()
+		if *r.Distribution == "" {
+			name = ""
+		}
+	}
+	g.Distribution, g.Version = name, r.Darkosen
+	return g
 }
 
 func Snapshot(r io.ReaderAt, size int64) (string, error) {
@@ -200,6 +241,9 @@ func InspectCard(f io.ReaderAt, size int64) (Card, error) {
 			}
 		}
 	}
+	if _, ok := t.Find(GuestPartition); ok {
+		c.Guest = cardGuest(c.Kept[GuestFile])
+	}
 	_, roms := t.Find("EASYROMS")
 	c.NoROMs = !roms
 	c.Table = t
@@ -259,7 +303,7 @@ func BuildWith(im *firmware.Image, card Card, size int64, mode, profile string, 
 	apps, prepared := canPrepare(im)
 	prepared = prepared && mode == "install"
 	if opts.Guest != nil && !prepared {
-		return nil, errors.New("dArkOSen can only be put on the card with a fresh installation of a release that supports it")
+		return nil, errors.New("a game system can only be put on the card with a fresh installation of a release that supports it")
 	}
 	for _, q := range im.Table.Parts {
 		// an update keeps the card's userdata where the image has AUTOAPK; a prepared
@@ -311,13 +355,25 @@ func BuildWith(im *firmware.Image, card Card, size int64, mode, profile string, 
 				}
 				p.Table.Parts = append(p.Table.Parts, q)
 				p.Protected = append(p.Protected, Range{q.Name, q.Offset(), q.Size()})
+			case GuestPartition:
+				// the game system stays exactly where it is, with its number and
+				// identity (the console's record of it names them; RECORD-FORMAT)
+				p.Table.Parts = append(p.Table.Parts, q)
+				p.Protected = append(p.Protected, Range{q.Name, q.Offset(), q.Size()})
 			case "BOOT", "system", "vendor", "metadata", "misc", "cache", "idbloader", "uboot", "trust":
 			default:
 				return nil, fmt.Errorf("unknown partition %q; refusing to overwrite this layout", q.Name)
 			}
 		}
+		if guest, ok := card.Table.Find(GuestPartition); ok {
+			for _, q := range p.Table.Parts {
+				if q.Name != GuestPartition && q.Start <= guest.End && guest.Start <= q.End {
+					return nil, ErrGuestInTheWay.New()
+				}
+			}
+		}
 		for i, q := range p.Table.Parts {
-			if q.Name == "userdata" || q.Name == "EASYROMS" || q.Name == AutoAPK {
+			if q.Name == "userdata" || q.Name == "EASYROMS" || q.Name == AutoAPK || q.Name == GuestPartition {
 				continue
 			}
 			old, exists := card.Table.Find(q.Name)
@@ -337,7 +393,7 @@ func BuildWith(im *firmware.Image, card Card, size int64, mode, profile string, 
 	// Windows only gets BOOT, EASYROMS and AUTOAPK (people may add their own APKs
 	// before the first start); the rest would each pop up "format disk?"
 	for i := range p.Table.Parts {
-		if n := p.Table.Parts[i].Name; n != "BOOT" && n != "EASYROMS" && n != AutoAPK {
+		if n := p.Table.Parts[i].Name; n != "BOOT" && n != "EASYROMS" && n != AutoAPK && !(mode == "update" && n == GuestPartition) {
 			p.Table.Parts[i].Flags |= layout.NoDriveLetter
 		}
 	}
@@ -347,6 +403,9 @@ func BuildWith(im *firmware.Image, card Card, size int64, mode, profile string, 
 	head, tail, e := p.Table.Encode()
 	if e != nil {
 		return nil, e
+	}
+	if mode == "install" {
+		p.Probes = capacityProbes(size)
 	}
 	// Commit the backup table before the primary table, after all partition payloads.
 	p.Writes = append(p.Writes, Write{Range: Range{"Backup partition table", size - int64(len(tail)), int64(len(tail))}, Data: tail}, Write{Range: Range{"Partition table", 0, int64(len(head))}, Data: head})
@@ -413,6 +472,16 @@ func (p *Plan) Validate() error {
 		for _, keep := range p.Protected {
 			if w.Offset < keep.End() && keep.Offset < w.End() {
 				return fmt.Errorf("write to %s would damage %s", w.Name, keep.Name)
+			}
+		}
+	}
+	for _, r := range p.Probes {
+		if p.Mode != "install" || r.Offset < 0 || r.Length <= 0 || r.Offset > p.Size || r.Length > p.Size-r.Offset || r.Offset%512 != 0 || r.Length%512 != 0 {
+			return errors.New("invalid card size check")
+		}
+		for _, keep := range p.Protected {
+			if r.Offset < keep.End() && keep.Offset < r.End() {
+				return fmt.Errorf("the card size check would damage %s", keep.Name)
 			}
 		}
 	}

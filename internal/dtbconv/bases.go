@@ -11,7 +11,7 @@ import (
 // scripts/update-dtbconv-bases.sh rebuilds them; bases/SOURCES.txt says
 // which kernel commit they were built from.
 //
-//go:embed bases/*.dtb.gz bases/SOURCES.txt
+//go:embed bases/*.dtb.gz
 var baseFiles embed.FS
 
 func readBase(name string) []byte {
@@ -34,12 +34,6 @@ func readBase(name string) []byte {
 // EmbeddedBases returns the bases built into the program.
 func EmbeddedBases() Bases {
 	return Bases{Genuine: readBase("r36s"), EE: readBase("ee"), Soy: readBase("soy"), UBoot: readBase("uboot")}
-}
-
-// BaseSources says where the embedded bases come from.
-func BaseSources() string {
-	b, _ := baseFiles.ReadFile("bases/SOURCES.txt")
-	return string(b)
 }
 
 // BaseProfiles are the BOOT folders of a release image that hold the same

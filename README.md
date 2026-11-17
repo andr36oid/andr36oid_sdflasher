@@ -21,6 +21,16 @@ Use **Apply hotfixes** to choose an existing card and copy fixes without reflash
 
 Hotfixes must match the card's exact build. The card needs `BOOT/andr36oid-build.txt`, which this flasher preserves when flashing a recent release. Older cards without that file cannot be offered hotfixes. Checking for hotfixes needs an internet connection; a failed check does not prevent flashing.
 
+## first start on a Mac
+The Mac app is not signed by Apple, so macOS blocks it the first time. To open it anyway:
+
+1. Double-click the app. macOS says it can't check the app. Click **Done** (or **OK**).
+2. Open **System Settings**, then **Privacy & Security**.
+3. Scroll down. Next to the message about the flasher, click **Open Anyway**.
+4. Enter your Mac password and click **Open**.
+
+You only do this once. After that the app opens like any other. On older macOS versions you can also right-click (or Control-click) the app, choose **Open**, then click **Open** again.
+
 ## windows without an OpenGL driver
 The Windows zip ships `opengl32.dll`, Mesa's llvmpipe software renderer, beside the exe. Keep the two together: it is what lets the window open on a fresh Windows 11 install with only the Microsoft Basic Display Adapter, in a VM, or over Remote Desktop, where Windows has no OpenGL at all. Rendering happens on the CPU, which is plenty for this UI. Delete the DLL if you would rather use your GPU driver's OpenGL. The DLL is third-party (Mesa, MIT licence; LLVM, Apache-2.0 with LLVM Exceptions), see `third_party/mesa/` and the `licenses/` folder in the zip.
 

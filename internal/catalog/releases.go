@@ -107,6 +107,10 @@ func usable(rel []release) []Asset {
 	}
 	return out
 }
+
+// spaceFor is firmware.CheckSpace (the tests replace it).
+var spaceFor = firmware.CheckSpace
+
 func Download(ctx context.Context, a Asset, dir string, progress func(int64, int64)) (string, error) {
 	return downloadRelease(ctx, a, Repository, dir, progress)
 }
@@ -133,6 +137,25 @@ func downloadRelease(ctx context.Context, a Asset, repository, dir string, progr
 		return "", e
 	}
 	final := filepath.Join(dir, digest+"-"+filepath.Base(a.Name))
+	// the cache is named by the digest: a complete file there with that checksum is
+	// this asset, so it isn't downloaded again (a damaged one is downloaded over)
+	if cached, e := os.Open(final); e == nil {
+		st, se := cached.Stat()
+		var have string
+		if se == nil && st.Size() == a.Size {
+			have, _ = firmware.Hash(ctx, cached, a.Size, nil)
+		}
+		cached.Close()
+		if have == digest {
+			if progress != nil {
+				progress(a.Size, a.Size)
+			}
+			return final, nil
+		}
+	}
+	if e := spaceFor(dir, a.Size); e != nil {
+		return "", e
+	}
 	req, e := http.NewRequestWithContext(ctx, "GET", a.URL, nil)
 	if e != nil {
 		return "", e

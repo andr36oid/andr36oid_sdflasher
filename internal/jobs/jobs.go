@@ -65,6 +65,9 @@ type Result struct {
 	Card           *flash.Card                 `json:"card,omitempty"`
 	Progress       *flash.Progress             `json:"progress,omitempty"`
 	Backup         string                      `json:"backup,omitempty"`
+
+	// ErrorKind is flash.Classify of the error, so that the app can add hints.
+	ErrorKind flash.FailureKind `json:"error_kind,omitempty"`
 }
 
 func CacheDir() (string, error) {
@@ -362,12 +365,21 @@ func Worker(job string) error {
 		}
 		h, e := platform.Open(d, true)
 		if e != nil {
-			return e
+			if _, busy := platform.Busy(e.Error()); busy {
+				return e
+			}
+			if wp := flash.WriteProtectedError(e); wp != nil {
+				return wp
+			}
+			// no access to the card, or it went away
+			return flash.DeviceFailure(e)
 		}
 		// a new card stays mounted for adding APKs to AUTOAPK; the app ejects it
 		h.Remount = req.Mode == "install"
 		defer h.Close()
-		card, e := flash.InspectCard(h.File, d.Size)
+		// errors of the card itself, also outside the write, get the failure hints
+		dev := flash.DeviceErrors(h.File)
+		card, e := flash.InspectCard(dev, d.Size)
 		if e != nil {
 			return e
 		}
@@ -428,28 +440,28 @@ func Worker(job string) error {
 		if req.Mode == "update" {
 			result.Backup = backup
 		}
-		if e = flash.Execute(context.Background(), h.File, im, p, boot, backup, func(p flash.Progress) { emit(Result{Progress: &p, Backup: result.Backup}) }); e != nil {
+		if e = flash.Execute(context.Background(), dev, im, p, boot, backup, func(p flash.Progress) { emit(Result{Progress: &p, Backup: result.Backup}) }); e != nil {
 			return e
 		}
-		if e = firmware.RecordImageSource(h.File, d.Size, im.BuildIdentity, req.ImageSource, dir); e != nil {
+		if e = firmware.RecordImageSource(dev, d.Size, im.BuildIdentity, req.ImageSource, dir); e != nil {
 			return e
 		}
 		if freshPack != nil && req.CustomDTB == "" {
-			result.DTBResult, e = firmware.ApplyDTBPack(h.File, d.Size, freshPack, im.BuildIdentity, dir, firmware.DTBOptions{Profile: req.Profile})
+			result.DTBResult, e = firmware.ApplyDTBPack(dev, d.Size, freshPack, im.BuildIdentity, dir, firmware.DTBOptions{Profile: req.Profile})
 			if e != nil {
 				return e
 			}
 		}
 		if loader != nil {
 			emit(Result{Progress: &flash.Progress{Phase: "Bootloader", Done: 0, Total: firmware.BootloaderSize}})
-			if e = firmware.ApplyResolvedBootOptions(h.File, d.Size, loader, result.Bootloader, im.BuildIdentity, dir); e != nil {
+			if e = firmware.ApplyResolvedBootOptions(dev, d.Size, loader, result.Bootloader, im.BuildIdentity, dir); e != nil {
 				return e
 			}
 		}
 		return nil
 	}
 	if e := work(); e != nil {
-		result.Error = e.Error()
+		result.Error, result.ErrorKind = e.Error(), flash.Classify(e)
 	}
 	return nil
 }
@@ -503,7 +515,25 @@ func helper(dir string) (string, error) {
 	out.Close()
 	return dst, e
 }
+
+// writes: the actions that change the card. The computer is kept awake while one runs.
+var writes = map[string]bool{"write": true, "restore": true, "dtb-apply": true, "dtb-restore": true, "bootloader-apply": true, "hotfix-apply": true, "kernel-apply": true}
+
+// inhibitSleep is platform.InhibitSleep (the tests count it).
+var inhibitSleep = platform.InhibitSleep
+
+// runHelper is platform.RunHelper (the tests stand in for the helper).
+var runHelper = platform.RunHelper
+
+// helperPath is helper (the tests stand in for the helper).
+var helperPath = helper
+
 func Run(req Request, onProgress func(flash.Progress)) (Result, error) {
+	if writes[req.Action] {
+		// a computer that goes to sleep halfway leaves the card incomplete
+		release := inhibitSleep("Writing an SD card")
+		defer release()
+	}
 	cache, e := CacheDir()
 	if e != nil {
 		return Result{}, e
@@ -519,7 +549,7 @@ func Run(req Request, onProgress func(flash.Progress)) (Result, error) {
 			return Result{}, e
 		}
 	}
-	exe, e := helper(dir)
+	exe, e := helperPath(dir)
 	if e != nil {
 		return Result{}, e
 	}
@@ -532,21 +562,34 @@ func Run(req Request, onProgress func(flash.Progress)) (Result, error) {
 		return Result{}, e
 	}
 	ch := make(chan error, 1)
-	go func() { ch <- platform.RunHelper(exe, job) }()
+	go func() { ch <- runHelper(exe, job) }()
 	timer := time.NewTicker(150 * time.Millisecond)
 	defer timer.Stop()
 	var latest Result
+	// began: the helper had begun to change the card
+	began := false
 	poll := func() {
 		b, e := os.ReadFile(filepath.Join(dir, "status.json"))
 		if e == nil {
 			var r Result
 			if json.Unmarshal(b, &r) == nil {
 				latest = r
-				if r.Progress != nil && onProgress != nil {
-					onProgress(*r.Progress)
+				if r.Progress != nil {
+					began = began || req.Action == "write" && r.Progress.Writing()
+					if onProgress != nil {
+						onProgress(*r.Progress)
+					}
 				}
 			}
 		}
+	}
+	// stopped is the error of a helper that ended (crashed, was killed) halfway: the
+	// card is incomplete when it had begun to write
+	stopped := func(e error) error {
+		if !began {
+			return e
+		}
+		return flash.DeviceFailure(fmt.Errorf("%w (%v)", flash.ErrStoppedMidWrite.New(), e))
 	}
 	for {
 		select {
@@ -555,13 +598,13 @@ func Run(req Request, onProgress func(flash.Progress)) (Result, error) {
 		case e := <-ch:
 			poll()
 			if e != nil {
-				return latest, fmt.Errorf("administrator access was denied or the helper stopped: %w", e)
+				return latest, stopped(fmt.Errorf("administrator access was denied or the helper stopped: %w", e))
 			}
 			if !latest.Done {
-				return latest, fmt.Errorf("disk helper ended without a result; recovery files, if present, are in %s", dir)
+				return latest, stopped(fmt.Errorf("disk helper ended without a result; recovery files, if present, are in %s", dir))
 			}
 			if latest.Error != "" {
-				return latest, errors.New(latest.Error)
+				return latest, flash.NewFailure(latest.ErrorKind, errors.New(latest.Error))
 			}
 			return latest, nil
 		}

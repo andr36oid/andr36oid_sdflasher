@@ -1,0 +1,135 @@
+package flash
+
+import (
+	"errors"
+	"fmt"
+	"io"
+
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
+)
+
+// FailureKind says what a failed write was up against, so that the apps can add
+// the right hints after the error itself. Only failures of the card or the reader
+// get one; a cancel, a wrong choice, the network or a damaged download keep just
+// their own message.
+type FailureKind string
+
+const (
+	// FailureOther: no hints.
+	FailureOther FailureKind = ""
+	// FailureDevice: the card or the reader failed or went away: an I/O error, a short
+	// write, the device gone, or no access to it.
+	FailureDevice FailureKind = "device"
+	// FailureVerify: what was read back from the card is not what was written.
+	FailureVerify FailureKind = "verify"
+	// FailureCapacity: the card is not the size it reports (checkCapacity).
+	FailureCapacity FailureKind = "capacity"
+)
+
+// Failure is an error of a known kind. Its message is the wrapped error's.
+type Failure struct {
+	Kind FailureKind
+	Err  error
+}
+
+func (f *Failure) Error() string { return f.Err.Error() }
+func (f *Failure) Unwrap() error { return f.Err }
+
+// NewFailure marks e as a failure of kind; nil stays nil, FailureOther leaves e as it is.
+func NewFailure(kind FailureKind, e error) error {
+	if e == nil || kind == FailureOther {
+		return e
+	}
+	return &Failure{kind, e}
+}
+
+// DeviceFailure marks e (an error of the card or the reader) as FailureDevice.
+func DeviceFailure(e error) error { return NewFailure(FailureDevice, e) }
+
+// Classify is the kind of e: the innermost marked one wins over the outer, so that
+// a verify mismatch stays one even when restoring an update wrapped it.
+func Classify(e error) FailureKind {
+	var f *Failure
+	kind := FailureOther
+	for errors.As(e, &f) {
+		kind = f.Kind
+		e = f.Err
+	}
+	return kind
+}
+
+// The hints, in English: the apps translate each line.
+const (
+	hintIntro    = "If it keeps failing:"
+	hintReader   = "Try a different card reader."
+	hintComputer = "Try a different computer."
+	hintAndroid  = "Some Android phones and tablets cannot write SD cards this way at all. If so, use a computer."
+	hintFaulty   = "The card may be faulty or not its stated size."
+)
+
+// FailureHints are the lines to show after the error of a failure of kind, none for
+// FailureOther. android is true in the Android app: a phone is not a computer, so
+// instead of another computer it says that some phones can't do this at all.
+func FailureHints(kind FailureKind, android bool) []string {
+	var out []string
+	switch kind {
+	case FailureVerify:
+		out = append(out, hintFaulty)
+		fallthrough
+	case FailureDevice, FailureCapacity:
+		// a reader that can't address the whole card looks like a fake card too
+		out = append(out, hintIntro, hintReader)
+		if android {
+			out = append(out, hintAndroid)
+		} else {
+			out = append(out, hintComputer)
+		}
+	}
+	return out
+}
+
+// The messages of failures the apps show translated (i18n.Find reads them back out
+// of an error's text).
+var (
+	// ErrFakeCapacity: the card claims more than it holds (checkCapacity).
+	ErrFakeCapacity = i18n.NewFormat("This card is not the size it claims (it reports %s, but only about %s works). It cannot be used.")
+	// ErrWriteProtected: the card refused the first write.
+	ErrWriteProtected = i18n.NewFormat("This card is write-protected, so nothing was written. Slide the lock switch on the card or adapter, then try again.")
+	// ErrStoppedMidWrite: the write ended (the disk helper died, was killed) after it
+	// had begun to change the card.
+	ErrStoppedMidWrite = i18n.NewFormat("The writing stopped before it finished. The card is incomplete and has to be written again before you use it.")
+	// ErrGuestInTheWay: an update would put the new release's partitions where the
+	// card's game system is.
+	ErrGuestInTheWay = i18n.NewFormat("The new release needs room on the card that its game system uses, so this card can't be updated. Write it again with a new installation instead.")
+	// ErrRestoreFailed marks an update whose automatic restore failed.
+	ErrRestoreFailed = errors.New("automatic restore failed")
+)
+
+// gigabytes is a card size as the apps show it.
+func gigabytes(n int64) string { return fmt.Sprintf("%.1f GB", float64(n)/1e9) }
+
+// DeviceErrors is d with every error of it marked as FailureDevice, for the card
+// I/O around the write (reading the card first, the records after it).
+func DeviceErrors(d Device) Device { return deviceErrors{d} }
+
+// deviceErrors marks every error of the card it wraps as FailureDevice.
+type deviceErrors struct{ Device }
+
+func (d deviceErrors) ReadAt(b []byte, off int64) (int, error) {
+	n, e := d.Device.ReadAt(b, off)
+	if e == io.EOF {
+		// callers compare with io.EOF itself
+		return n, e
+	}
+	return n, DeviceFailure(e)
+}
+
+func (d deviceErrors) WriteAt(b []byte, off int64) (int, error) {
+	n, e := d.Device.WriteAt(b, off)
+	if e == nil && n != len(b) {
+		e = io.ErrShortWrite
+	}
+	return n, DeviceFailure(e)
+}
+
+func (d deviceErrors) Sync() error { return DeviceFailure(d.Device.Sync()) }

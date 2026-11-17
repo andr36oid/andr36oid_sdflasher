@@ -77,7 +77,7 @@ final class UsbCard {
       return I18n.text(
           context,
           "This device does not support USB host mode (OTG), so no app on it can talk to"
-              + " a card reader. Please use the Windows or Linux flasher instead: it is the"
+              + " a card reader. Please use the flasher for Windows, macOS or Linux instead: it is the"
               + " proven way to write the card. Download it from %s",
           DESKTOP_DOWNLOAD);
     UsbManager manager = (UsbManager) context.getSystemService(Context.USB_SERVICE);
@@ -100,7 +100,7 @@ final class UsbCard {
         context,
         "A USB device is connected (%s), but it is not a card reader this app can use: it does not"
             + " offer the standard USB mass storage interface. Try another reader, or use the"
-            + " Windows or Linux flasher: %s",
+            + " flasher for Windows, macOS or Linux: %s",
         names.toString(),
         DESKTOP_DOWNLOAD);
   }
@@ -153,7 +153,7 @@ final class UsbCard {
           context,
           "Android did not let the app take over the card reader. Another app or a system"
               + " driver may be using it. Unplug the reader, plug it in again and try once more."
-              + " If it keeps failing, use the Windows or Linux flasher: %s",
+              + " If it keeps failing, use the flasher for Windows, macOS or Linux: %s",
           e);
     }
   }
@@ -169,7 +169,7 @@ final class UsbCard {
       throw new ReaderException(
           context,
           "The card reader does not answer the way the app expects, so it cannot be used from"
-              + " this device. Try another reader, or use the Windows or Linux flasher: %s",
+              + " this device. Try another reader, or use the flasher for Windows, macOS or Linux: %s",
           e);
     }
     return driver;
@@ -233,8 +233,8 @@ final class UsbCard {
           I18n.text(
               context,
               "The card reader stopped responding and the operation could not finish. Unplug the"
-                  + " reader, plug it in again and try once more, or use the Windows or Linux"
-                  + " flasher: %s",
+                  + " reader, plug it in again and try once more, or use the flasher for Windows,"
+                  + " macOS or Linux: %s",
               DESKTOP_DOWNLOAD);
       connection.flush();
       return connection;
@@ -322,8 +322,8 @@ final class UsbCard {
           if (text == null)
             text =
                 "The card reader stopped responding and the operation could not finish. Unplug"
-                    + " the reader, plug it in again and try once more, or use the Windows or"
-                    + " Linux flasher: "
+                    + " the reader, plug it in again and try once more, or use the flasher for"
+                    + " Windows, macOS or Linux: "
                     + DESKTOP_DOWNLOAD;
           throw new IOException(text + "\n" + e.getMessage(), e);
         }

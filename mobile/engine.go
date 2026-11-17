@@ -39,7 +39,7 @@ func adapt(d Disk) (*usbDisk, error) {
 	}
 	size := d.Capacity()
 	if size < 1<<30 || size%512 != 0 {
-		return nil, errors.New("unsupported card capacity")
+		return nil, flash.DeviceFailure(errors.New("unsupported card capacity"))
 	}
 	return &usbDisk{disk: d, size: size}, nil
 }
@@ -49,10 +49,10 @@ func (d *usbDisk) ReadAt(p []byte, off int64) (int, error) {
 	}
 	b, e := d.disk.Read(off, int64(len(p)))
 	if e != nil {
-		return 0, e
+		return 0, flash.DeviceFailure(e)
 	}
 	if len(b) != len(p) {
-		return 0, io.ErrUnexpectedEOF
+		return 0, flash.DeviceFailure(io.ErrUnexpectedEOF)
 	}
 	return copy(p, b), nil
 }
@@ -61,11 +61,11 @@ func (d *usbDisk) WriteAt(p []byte, off int64) (int, error) {
 		return 0, errors.New("invalid USB write range")
 	}
 	if e := d.disk.Write(off, p); e != nil {
-		return 0, e
+		return 0, flash.DeviceFailure(e)
 	}
 	return len(p), nil
 }
-func (d *usbDisk) Sync() error     { return d.disk.Flush() }
+func (d *usbDisk) Sync() error     { return flash.DeviceFailure(d.disk.Flush()) }
 func encode(v any) (string, error) { b, e := json.Marshal(v); return string(b), e }
 func CheckAppUpdate(current string) (string, error) {
 	update, err := catalog.CheckAppUpdate(context.Background(), current)
@@ -91,11 +91,14 @@ type Session struct {
 	hotfixOffer    *firmware.HotfixOffer
 	hotfixIdentity string
 	hotfixURL      string // empty uses the published index
-	// guest is the dArkOSen release offered for image, guestPath its unpacked
-	// image once DownloadGuest fetched it; both go with the loaded release.
-	guest     *catalog.GuestRelease
-	guestFor  string
-	guestPath string
+	// guests are the game system releases offered for image (by system), guestPaths
+	// their unpacked images once DownloadGuestSystem fetched them; they go with the
+	// loaded release (guestFor).
+	guests     map[string]*catalog.GuestRelease
+	guestFor   string
+	guestPaths map[string]string
+	// failure is flash.Classify of the last Write's error ("" after a good one).
+	failure flash.FailureKind
 	// cancel stops the write in progress; guarded by cancelMu, not mu, so the
 	// app can call Cancel while Write holds mu.
 	cancelMu sync.Mutex
@@ -105,6 +108,32 @@ type Session struct {
 // Stopped is the message of the error Write returns when Cancel ended it. The
 // app matches on it to show "stopped" rather than a failure.
 const Stopped = "stopped by the user"
+
+// StoppedIncomplete is Stopped for a new card that was stopped after the write had
+// begun to change it: it has to be written again before it is used. It starts with
+// Stopped.
+const StoppedIncomplete = Stopped + "; the card is incomplete"
+
+// stopReason is the error of a write that ended with e: Stopped when Cancel ended it
+// (StoppedIncomplete when a new card had begun to change), e itself otherwise and
+// when the restore of a stopped update failed (the card is not as it was).
+func stopReason(cancelled bool, e error, began bool, mode string) error {
+	if !cancelled || errors.Is(e, flash.ErrRestoreFailed) {
+		return e
+	}
+	if began && mode == "install" {
+		return errors.New(StoppedIncomplete)
+	}
+	return errors.New(Stopped)
+}
+
+// StoppedDownload is Stopped for a game system download that Cancel ended, before
+// anything was written. It starts with Stopped.
+const StoppedDownload = Stopped + "; nothing was written"
+
+// Explain is the user's message in an error text from the engine, translated, or ""
+// when it has none (the technical text is shown as it is).
+func Explain(locale, message string) string { return i18n.Explain(locale, message) }
 
 // Cancel stops a Write that is running. The write returns with an error whose
 // message starts with Stopped; the card is left as it is at that moment (an
@@ -212,31 +241,128 @@ type options struct {
 	ConvertDTB     bool                       `json:"convert_dtb"`
 	System         string                     `json:"system"`
 	SystemAccepted bool                       `json:"system_accepted"`
-	// Guest puts the dArkOSen release of GuestOffer on a new card, in its own
-	// partition. DownloadGuest must have fetched it.
+	// GuestSystem is the game system put on a new card, in its own partition:
+	// "dArkOS", "dArkOSRE", "dArkOSen" or "none" ("" is none, or dArkOSen with Guest).
+	// DownloadGuestSystem must have fetched it.
+	GuestSystem string `json:"guest_system"`
+	// Guest is the older form of GuestSystem "dArkOSen", still understood.
 	Guest bool `json:"guest"`
 }
 
+// guestSystem is the system opts ask for, catalog.NoGuest for none.
+func (o options) guestSystem() (string, error) {
+	if o.GuestSystem == "" && o.Guest {
+		return "dArkOSen", nil
+	}
+	id, ok := catalog.ParseGuestChoice(o.GuestSystem)
+	if !ok {
+		return "", fmt.Errorf("unknown game system %q", o.GuestSystem)
+	}
+	return id, nil
+}
+
 type guestOffer struct {
+	System         string `json:"system"`
+	Name           string `json:"name"`
 	Darkosen       string `json:"darkosen"`
 	DownloadBytes  int64  `json:"download_bytes"`
 	PartitionBytes int64  `json:"partition_bytes"`
 	Downloaded     bool   `json:"downloaded"`
+	// State is "ready"; "none" (no release published yet), "missing" (the lookup
+	// failed: no connection, GitHub, a damaged release), "flasher" (the release
+	// needs a newer flasher) or "too_old" (the loaded release can't run it).
+	State string `json:"state"`
 }
 
-// offer is the dArkOSen release that fits the loaded release, nil for none. It
-// forgets the one looked up or downloaded for another release.
-func (s *Session) offer() *catalog.GuestRelease {
+// latestGuest is catalog.LatestGuest (the tests replace it).
+var latestGuest = catalog.LatestGuest
+
+// Why a game system can't be offered, as guestOffer.State.
+const (
+	guestNone    = "none"
+	guestMissing = "missing"
+	guestFlasher = "flasher"
+	guestTooOld  = "too_old"
+)
+
+// offerFor is the release of system id that fits the loaded release, nil for none.
+// It forgets what was looked up or downloaded for another release.
+func (s *Session) offerFor(id string) *catalog.GuestRelease {
 	if s.image == nil || s.guestFor != s.image.SHA256 {
-		s.guest, s.guestPath = nil, ""
+		s.guests, s.guestPaths, s.guestFor = nil, nil, ""
 		return nil
 	}
-	return s.guest
+	return s.guests[id]
 }
 
-// GuestOffer says which dArkOSen release can go on a new card with the loaded
-// release, as JSON, or "" when there is none: an older Android release, or none
-// published that this one can run. The app shows the choice only then.
+// lookupGuest finds the latest release of src for the loaded release im and keeps it.
+func (s *Session) lookupGuest(im *firmware.Image, src catalog.GuestSource) (guestOffer, error) {
+	o := guestOffer{System: src.ID, Name: src.Display, State: guestMissing}
+	g, e := latestGuest(context.Background(), src)
+	if errors.Is(e, catalog.ErrGuestNeedsNewerFlasher) {
+		o.State = guestFlasher
+		return o, nil
+	}
+	if e != nil {
+		return o, e
+	}
+	if g == nil {
+		o.State = guestNone
+		return o, nil
+	}
+	o.Darkosen, o.DownloadBytes, o.PartitionBytes = g.Darkosen, g.DownloadBytes(), g.PartitionBytes
+	if e := flash.GuestFits(im, &flash.Guest{Distribution: g.Distribution, Minimum: g.Minimum}); e != nil {
+		o.State = guestFlasher
+		if errors.Is(e, flash.ErrGuestNeedsNewerRelease) {
+			o.State = guestTooOld
+		}
+		return o, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.image != im {
+		return o, nil
+	}
+	if s.guestFor != im.SHA256 {
+		s.guests, s.guestPaths, s.guestFor = map[string]*catalog.GuestRelease{}, map[string]string{}, im.SHA256
+	}
+	if old := s.guests[src.ID]; old == nil || old.Image.SHA256 != g.Image.SHA256 {
+		s.guests[src.ID] = g
+		delete(s.guestPaths, src.ID)
+	}
+	o.State, o.Downloaded = "ready", s.guestPaths[src.ID] != ""
+	return o, nil
+}
+
+// GuestOffers lists the game systems for a new card with the loaded release, as JSON
+// {"default": "dArkOS", "systems": [...]} in the order to offer them (guestOffer;
+// "none" is not listed), or "" when the release can't run a system from its own
+// partition. A system that can't be looked up is listed as "missing".
+func (s *Session) GuestOffers() (string, error) {
+	s.mu.Lock()
+	im := s.image
+	s.mu.Unlock()
+	if im == nil || !im.Subsystem() {
+		return "", nil
+	}
+	list := make([]guestOffer, len(catalog.GuestSources))
+	var wg sync.WaitGroup
+	for i, src := range catalog.GuestSources {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			list[i], _ = s.lookupGuest(im, src)
+		}()
+	}
+	wg.Wait()
+	return encode(struct {
+		Default string       `json:"default"`
+		Systems []guestOffer `json:"systems"`
+	}{catalog.DefaultGuest, list})
+}
+
+// GuestOffer is the older single offer: dArkOSen, as JSON, or "" when it can't go on
+// a new card with the loaded release.
 func (s *Session) GuestOffer() (string, error) {
 	s.mu.Lock()
 	im := s.image
@@ -244,48 +370,53 @@ func (s *Session) GuestOffer() (string, error) {
 	if im == nil || !im.Subsystem() {
 		return "", nil
 	}
-	g, e := catalog.LatestGuest(context.Background())
-	if e != nil {
+	src, _ := catalog.FindGuestSource("dArkOSen")
+	o, e := s.lookupGuest(im, src)
+	if e != nil || o.State != "ready" {
 		return "", e
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.image != im || g == nil || flash.GuestFits(im, &flash.Guest{Minimum: g.Minimum}) != nil {
-		return "", nil
-	}
-	if s.guestFor != im.SHA256 || s.guest == nil || s.guest.Image.SHA256 != g.Image.SHA256 {
-		s.guest, s.guestFor, s.guestPath = g, im.SHA256, ""
-	}
-	return encode(guestOffer{g.Darkosen, g.DownloadBytes(), g.PartitionBytes, s.guestPath != ""})
+	return encode(o)
 }
 
-// DownloadGuest fetches and unpacks the dArkOSen release of GuestOffer; the
-// events are "downloading" and then "unpack". Write with "guest" needs it.
-func (s *Session) DownloadGuest(observer Observer) error {
+// DownloadGuestSystem fetches and unpacks the release of system id that GuestOffers
+// listed as ready; the events are "downloading" and then "unpack". Write with that
+// "guest_system" needs it.
+func (s *Session) DownloadGuestSystem(id string, observer Observer) error {
 	s.mu.Lock()
-	g, im := s.offer(), s.image
+	g, im := s.offerFor(id), s.image
 	s.mu.Unlock()
 	if g == nil {
-		return errors.New("no dArkOSen release for this Android release")
+		return errors.New("this game system can't go on a card with this Android release")
 	}
-	path, e := catalog.DownloadGuest(context.Background(), g, s.dir, func(phase string, done, total int64) {
+	// Cancel stops the download too
+	ctx, done := s.writeContext()
+	defer done()
+	path, e := catalog.DownloadGuest(ctx, g, s.dir, func(phase string, done, total int64) {
 		if phase != "unpack" {
 			phase = "downloading"
 		}
 		progress(observer, phase)(done, total)
 	})
 	if e != nil {
+		if ctx.Err() != nil {
+			return errors.New(StoppedDownload)
+		}
 		return e
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.image == im && s.guest == g {
-		s.guestPath = path
+	if s.image == im && s.guests[id] == g {
+		s.guestPaths[id] = path
 	}
 	return nil
 }
 
-// guestChoice is the dArkOSen image for a plan that asks for one.
+// DownloadGuest is the older form of DownloadGuestSystem("dArkOSen").
+func (s *Session) DownloadGuest(observer Observer) error {
+	return s.DownloadGuestSystem("dArkOSen", observer)
+}
+
+// guestChoice is the game system image for a plan that asks for one.
 func (s *Session) guestChoice(opts options) (*flash.Guest, error) {
 	return s.guestForOptions(opts, false)
 }
@@ -293,23 +424,24 @@ func (s *Session) guestChoice(opts options) (*flash.Guest, error) {
 // A preview describes the partition before the erase confirmation/download.
 // Write always rebuilds its plan with preview=false and the verified download.
 func (s *Session) guestForOptions(opts options, preview bool) (*flash.Guest, error) {
-	if !opts.Guest {
-		return nil, nil
+	id, e := opts.guestSystem()
+	if e != nil || id == catalog.NoGuest {
+		return nil, e
 	}
-	g := s.offer()
-	if g == nil || (s.guestPath == "" && !preview) {
-		return nil, errors.New("download dArkOSen first")
+	g := s.offerFor(id)
+	if g == nil || (s.guestPaths[id] == "" && !preview) {
+		return nil, fmt.Errorf("download %s first", id)
 	}
 	if opts.Mode != "install" {
-		return nil, errors.New("dArkOSen only goes on a newly written card")
+		return nil, fmt.Errorf("%s only goes on a newly written card", id)
 	}
-	path := s.guestPath
+	path := s.guestPaths[id]
 	if path == "" {
 		// Metadata only: Plan never opens this path. It is not saved in the
 		// session and cannot satisfy Write's strict download requirement.
 		path = filepath.Join(s.dir, "guest-preview")
 	}
-	return &flash.Guest{Path: path, Darkosen: g.Darkosen, Revision: g.Revision, Minimum: g.Minimum, Name: g.Image.Name, Size: g.Image.Size, SHA256: g.Image.SHA256, PartitionBytes: g.PartitionBytes}, nil
+	return &flash.Guest{Path: path, Distribution: g.Distribution, Darkosen: g.Darkosen, Revision: g.Revision, Minimum: g.Minimum, Name: g.Image.Name, Size: g.Image.Size, SHA256: g.Image.SHA256, PartitionBytes: g.PartitionBytes}, nil
 }
 
 func (s *Session) plan(d *usbDisk, input string, preview bool) (*flash.Plan, options, error) {
@@ -388,7 +520,31 @@ type record struct {
 	Profile    string                      `json:"profile"`
 }
 
+// Write writes the card. After a failure, LastFailureHints has the hints to show
+// after the error.
 func (s *Session) Write(d Disk, input string, observer Observer) (string, error) {
+	out, e := s.write(d, input, observer)
+	s.mu.Lock()
+	s.failure = flash.Classify(e)
+	s.mu.Unlock()
+	return out, e
+}
+
+// LastFailureHints are the hints for the last Write's failure: English lines, one
+// per line, each to be translated; "" when there are none (flash.FailureHints).
+func (s *Session) LastFailureHints() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return strings.Join(flash.FailureHints(s.failure, true), "\n")
+}
+
+// ReaderFailureHints are the hints for a failure of the card reader itself (the app
+// could not open or talk to it), in the form of LastFailureHints.
+func ReaderFailureHints() string {
+	return strings.Join(flash.FailureHints(flash.FailureDevice, true), "\n")
+}
+
+func (s *Session) write(d Disk, input string, observer Observer) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	dev, e := adapt(d)
@@ -473,11 +629,9 @@ func (s *Session) Write(d Disk, input string, observer Observer) (string, error)
 	}
 	defer os.Remove(boot)
 	backup := filepath.Join(dir, "recovery")
-	if e = flash.Execute(ctx, dev, s.image, p, boot, backup, func(p flash.Progress) { emit(observer, p) }); e != nil {
-		if ctx.Err() != nil {
-			e = errors.New(Stopped)
-		}
-		return "", fmt.Errorf("%w\nRecovery: %s", e, dir)
+	began := false
+	if e = flash.Execute(ctx, dev, s.image, p, boot, backup, func(p flash.Progress) { began = began || p.Writing(); emit(observer, p) }); e != nil {
+		return "", fmt.Errorf("%w\nRecovery: %s", stopReason(ctx.Err() != nil, e, began, p.Mode), dir)
 	}
 	if e = firmware.RecordImageSource(dev, dev.size, s.image.BuildIdentity, s.image.Source, dir); e != nil {
 		return "", e
@@ -582,7 +736,7 @@ func StorageLayoutForImage(image string, size int64, wantGiB int, noROMs bool, g
 		return "", err
 	}
 	if guestBytes < 0 || (guestBytes > 0 && !im.Subsystem()) {
-		return "", errors.New("this release cannot run dArkOSen from its own partition")
+		return "", errors.New("this release cannot run a game system from its own partition")
 	}
 	android, games, prepared, err := flash.PreparedSizes(&im, size, wantGiB, noROMs, guestBytes)
 	if err != nil {
@@ -593,7 +747,7 @@ func StorageLayoutForImage(image string, size int64, wantGiB int, noROMs bool, g
 		max = flash.MaxPreparedGiB(&im, size, guestBytes)
 	} else {
 		if guestBytes > 0 {
-			return "", errors.New("this release cannot prepare a dArkOSen partition")
+			return "", errors.New("this release cannot prepare a game system partition")
 		}
 		android, games = flash.UserdataLayout(size, wantGiB, noROMs)
 	}
@@ -697,4 +851,23 @@ func (s *Session) ApplyHotfixes(d Disk, selected string, observer Observer) (str
 		return "", e
 	}
 	return encode(results)
+}
+
+// CacheUsage is what the app's storage holds, as JSON: "total" bytes, "free" (what
+// ClearCache frees: downloaded releases, unpacked images and game systems) and
+// "backups" bytes in "backup_count" recovery backups, which it keeps.
+func (s *Session) CacheUsage() (string, error) {
+	total, backups, count := firmware.WorkDirUsage(s.dir)
+	return encode(map[string]int64{"total": total, "free": total - backups, "backups": backups, "backup_count": int64(count)})
+}
+
+// ClearCache frees the app's storage: downloaded releases, unpacked images and game
+// systems go, recovery backups stay. The loaded release goes with them; choose it
+// again afterwards. It waits for a write or download to finish.
+func (s *Session) ClearCache() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.image, s.guests, s.guestPaths, s.guestFor = nil, nil, nil, ""
+	firmware.ClearWorkDir(s.dir, false)
+	return nil
 }

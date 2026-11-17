@@ -21,7 +21,7 @@ func list(all bool) ([]Drive, error) {
 	// emit a JSON array so a single match still unmarshals. Get-Disk itself stays
 	// under Stop, so a real storage-provider failure still surfaces (with its
 	// message, captured from stderr below) instead of a bare "exit status 1".
-	script := `$ErrorActionPreference='Stop'; $d=@(); foreach ($k in @(Get-Disk | Where-Object { -not $_.IsBoot -and -not $_.IsSystem -and -not $_.IsReadOnly -and $_.Size -ge 1GB` + removable + ` })) { try { $v=@(Get-Partition -DiskNumber $k.Number -ErrorAction SilentlyContinue | ForEach-Object { $p=$_; $g=$p | Get-Volume -ErrorAction SilentlyContinue; if ($g -and $g.Path) { $g.Path }; $p.AccessPaths | Where-Object { $_ -and $_.StartsWith('\\?\Volume{') } } | ForEach-Object { $_.TrimEnd('\') } | Where-Object { $_ } | Select-Object -Unique); $d += @{ path=('\\.\PhysicalDrive'+$k.Number); name=$k.FriendlyName; serial=$k.SerialNumber; size=[long]$k.Size; sector_size=[long]$k.LogicalSectorSize; volumes=$v; fixed=($k.BusType -notin @('USB','SD','MMC')) } } catch {} }; ConvertTo-Json -InputObject @($d) -Compress -Depth 4`
+	script := `$ErrorActionPreference='Stop'; $d=@(); foreach ($k in @(Get-Disk | Where-Object { -not $_.IsBoot -and -not $_.IsSystem -and $_.Size -ge 1GB` + removable + ` })) { try { $m=''; try { $m=(Get-CimInstance Win32_DiskDrive -Filter ('Index=' + $k.Number) -ErrorAction SilentlyContinue).MediaType } catch {}; $v=@(Get-Partition -DiskNumber $k.Number -ErrorAction SilentlyContinue | ForEach-Object { $p=$_; $g=$p | Get-Volume -ErrorAction SilentlyContinue; if ($g -and $g.Path) { $g.Path }; $p.AccessPaths | Where-Object { $_ -and $_.StartsWith('\\?\Volume{') } } | ForEach-Object { $_.TrimEnd('\') } | Where-Object { $_ } | Select-Object -Unique); $d += @{ path=('\\.\PhysicalDrive'+$k.Number); name=$k.FriendlyName; serial=$k.SerialNumber; size=[long]$k.Size; sector_size=[long]$k.LogicalSectorSize; volumes=$v; fixed=($k.BusType -notin @('USB','SD','MMC')); write_protected=[bool]$k.IsReadOnly; external=(($k.BusType -eq 'USB') -and ("$m" -like 'External*' -or "$m" -like 'Fixed*')) } } catch {} }; ConvertTo-Json -InputObject @($d) -Compress -Depth 4`
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 	hide(cmd)
 	b, e := cmd.Output()
@@ -48,10 +48,15 @@ func list(all bool) ([]Drive, error) {
 	} else {
 		e = json.Unmarshal(b, &ds)
 	}
-	for i := range ds {
-		ds[i].Serial = strings.TrimSpace(ds[i].Serial)
+	// a write-protected card is listed (not usable), a read-only fixed disk is not
+	out := ds[:0]
+	for _, d := range ds {
+		d.Serial = strings.TrimSpace(d.Serial)
+		if !(d.Fixed && d.WriteProtected) {
+			out = append(out, d)
+		}
 	}
-	return ds, e
+	return out, e
 }
 
 // firstLine returns the first non-empty, trimmed line of s, capped so a huge
@@ -67,6 +72,7 @@ func firstLine(s string) string {
 	}
 	return ""
 }
+
 // Disk IOCTLs and the SET_DISK_ATTRIBUTES layout (ntdddisk.h). Taking the disk
 // offline force-dismounts every volume and, unlike per-volume locking, stops
 // Windows from auto-mounting any partition for as long as it stays offline,
@@ -108,6 +114,9 @@ func Open(d Drive, write bool) (*Handle, error) {
 	d, e := Revalidate(d)
 	if e != nil {
 		return nil, e
+	}
+	if write && d.WriteProtected {
+		return nil, errWriteProtected
 	}
 	var volumes []windows.Handle
 	offlined := false

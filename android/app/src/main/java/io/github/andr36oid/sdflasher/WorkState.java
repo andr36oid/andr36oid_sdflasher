@@ -64,8 +64,13 @@ final class WorkState {
     String key=image.optString("sha256")+image.optString("path");if(key.equals(dtbLookupKey))return;dtbLookupKey=key;
     new Thread(()->{try{JSONObject offer=new JSONObject(engine.findImageDTBs());if(image!=null&&key.equals(image.optString("sha256")+image.optString("path"))){dtbOnlineOffer=offer;revision++;}}catch(Exception ignored){}},"device-tree-set").start();
   }
-  static volatile JSONObject guestOffer;
-  static volatile boolean guest;
+  // The game systems on offer for the loaded image ({"default", "systems"}, see
+  // Session.GuestOffers), the one chosen ("none" for none), whether the user chose it
+  // (else the first that can go on the card is preselected), and whether the chosen
+  // one fits the card.
+  static volatile JSONObject guestOffers;
+  static volatile String guestChoice = "dArkOS";
+  static volatile boolean guestChosen, guestFits = true, guestLooking;
   private static JSONObject guestLookupImage;
   static volatile JSONObject hotfixOffer;
   static volatile org.json.JSONArray hotfixResults;
@@ -90,8 +95,9 @@ final class WorkState {
   static volatile boolean customAccepted = false, update = false, noROMs = false, busy = false;
   // seconds the card reader has not answered a call (0: responding); from the USB watchdog
   static volatile int stall = 0;
-  // a write is running that engine.cancel() can stop
-  static volatile boolean cancelable = false;
+  // a write is running that engine.cancel() can stop; downloading: it is still
+  // downloading the game system (nothing written yet)
+  static volatile boolean cancelable = false, downloading = false;
   // Android size for a new card in GiB, 0: the recommended size
   static volatile int userdataGiB = 0;
   // a different system image (GSI) copied into app storage, "" for andr36oid's own
@@ -121,8 +127,8 @@ final class WorkState {
   static void clearImage() {
     image = null;
  dtbLookupKey="";dtbOnlineOffer=null;
-    guestOffer = null;
-    guest = false;
+    guestOffers = null;
+    guestLooking = false;
     guestLookupImage = null;
     profile = "";
     custom = "";
@@ -153,16 +159,18 @@ final class WorkState {
     if (image == null || busy || update || guestLookupImage == image) return;
     JSONObject expected = image;
     guestLookupImage = expected;
+    guestLooking = true;
     new Thread(
             () -> {
-              JSONObject offer = null;
+              JSONObject offers = null;
               try {
-                String value = engine.guestOffer();
-                if (!value.isEmpty()) offer = new JSONObject(value);
+                String value = engine.guestOffers();
+                if (!value.isEmpty()) offers = new JSONObject(value);
               } catch (Exception ignored) {
               }
               if (image == expected) {
-                guestOffer = offer;
+                guestOffers = offers;
+                guestLooking = false;
                 revision++;
               }
             },
@@ -170,15 +178,69 @@ final class WorkState {
         .start();
   }
 
-  static boolean guestSelected() {
-    return !update && guest && guestOffer != null;
+  // The offer of system id, null when it is not listed.
+  static JSONObject guestOffer(String id) {
+    JSONObject offers = guestOffers;
+    org.json.JSONArray list = offers == null ? null : offers.optJSONArray("systems");
+    if (list != null)
+      for (int n = 0; n < list.length(); n++)
+        if (list.optJSONObject(n).optString("system").equals(id)) return list.optJSONObject(n);
+    return null;
+  }
+
+  // Whether the system of offer fits the selected card next to Android with the
+  // storage choices; true while no card or image is chosen yet.
+  static boolean guestFitsCard(JSONObject offer) {
+    UsbCard card = selected;
+    JSONObject im = image;
+    if (card == null || im == null) return true;
+    try {
+      Mobile.storageLayoutForImage(
+          im.toString(), card.bytes, userdataGiB, noROMs, offer.optLong("partition_bytes"));
+      return true;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  // While the user hasn't chosen: the first system that can go on the card (one that
+  // is ready and fits it), dArkOS when it can; none when no system can, as on the
+  // desktop.
+  static void guestDefault() {
+    if (guestChosen) return;
+    JSONObject offers = guestOffers;
+    org.json.JSONArray list = offers == null ? null : offers.optJSONArray("systems");
+    // still looking: the default stays selected until the list is there
+    guestChoice = offers == null && guestLooking ? "dArkOS" : "none";
+    if (list != null)
+      for (int n = 0; n < list.length(); n++) {
+        JSONObject offer = list.optJSONObject(n);
+        if (offer != null && "ready".equals(offer.optString("state")) && guestFitsCard(offer)) {
+          guestChoice = offer.optString("system");
+          return;
+        }
+      }
+  }
+
+  // The chosen system when it can go on the card, null for none.
+  static JSONObject guestSelected() {
+    if (update || "none".equals(guestChoice) || !guestFits) return null;
+    JSONObject o = guestOffer(guestChoice);
+    return o != null && "ready".equals(o.optString("state")) ? o : null;
+  }
+
+  // A system is chosen that can't go on the card (yet): the card isn't written until
+  // the user chooses another one or none.
+  static boolean guestBlocked() {
+    return !update && (guestLooking || guestOffers != null) && !"none".equals(guestChoice) && guestSelected() == null;
   }
 
   static void prepareGuest(String input) throws Exception {
     JSONObject options = new JSONObject(input);
-    if (!"install".equals(options.optString("mode")) || !options.optBoolean("guest")) return;
+    String system = options.optString("guest_system", "none");
+    if (!"install".equals(options.optString("mode")) || "none".equals(system)) return;
     try {
-      engine.downloadGuest(WorkState::guestEvent);
+      engine.downloadGuestSystem(system, WorkState::guestEvent);
     } finally {
       progress = null;
       revision++;
@@ -276,7 +338,7 @@ final class WorkState {
         .put("mode", update ? "update" : "install")
         .put("profile", profile)
         .put("no_roms", noROMs)
-        .put("guest", guestSelected())
+        .put("guest_system", guestSelected() == null ? "none" : guestChoice)
         .put("bootloader", card.optBoolean("data_card") ? JSONObject.NULL : bootloaderOptions())
         .put("userdata_gib", update || noROMs ? 0 : userdataGiB)
         .put("custom", custom)

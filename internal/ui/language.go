@@ -118,5 +118,14 @@ func fitDialog(d dialog.Dialog, message string, parent fyne.Window) {
 	d.Resize(fyne.NewSize(w, h))
 }
 func (s *screen) showError(err error) {
-	s.info(s.t("Operation could not finish"), s.t("Check the selected image and card, then try again.")+"\n\n"+s.t("Technical details")+":\n"+err.Error(), s.win)
+	s.info(s.t("Operation could not finish"), s.explain(err)+"\n\n"+s.t("Technical details")+":\n"+err.Error(), s.win)
+}
+
+// explain is the user's message in err, translated (i18n.Find), or the general
+// advice for an error that has none.
+func (s *screen) explain(err error) string {
+	if key, args, ok := i18n.Find(err); ok {
+		return s.t(key, args...)
+	}
+	return s.t("Check the selected image and card, then try again.")
 }

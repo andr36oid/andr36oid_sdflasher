@@ -71,13 +71,24 @@ type screen struct {
 	sizeLabel                           *widget.Label
 	sizeSlider                          *widget.Slider
 	sizeAuto                            *widget.Button
-	sizeSetting                         bool // refreshStorage is moving the slider
-	userdataGiB                         int  // Android size for a new card, 0: recommended
-	guest                               *catalog.GuestRelease
-	guestFor                            string // release image the dArkOSen lookup was made for
-	guestCheck                          *widget.Check
+	sizeSetting                         bool                    // refreshStorage is moving the slider
+	userdataGiB                         int                     // Android size for a new card, 0: recommended
+	guests                              map[string]*guestLookup // by system, for guestFor
+	guestFor                            string                  // release image the game system lookups were made for
+	guestChoice                         string                  // a catalog.GuestSources ID or catalog.NoGuest
+	guestChosen                         bool                    // the user picked guestChoice (no more preselection)
+	guestLabels                         []string                // guestRadio's options, in guestOptions' order
+	guestUpdating                       bool                    // refreshGuest is setting guestRadio
+	guestRadio                          *widget.RadioGroup
 	guestInfo                           *widget.Label
 	guestBox                            *fyne.Container
+	guestIntro                          *widget.Label
+	guestLookupCancel                   context.CancelFunc // stops the running lookups
+	guestWork                           *fyne.Container    // the game system download on the write page
+	guestStatus                         *widget.Label
+	guestBar                            *widget.ProgressBar
+	guestStop                           *widget.Button
+	closeAfter                          bool         // the window closes when the stopped download has ended
 	guestReady                          *flash.Guest // downloaded for the write being confirmed
 	sumValues                           [7]*widget.Label
 	modeHelp                            *widget.Label
@@ -125,6 +136,16 @@ func Run() {
 	w.Resize(fyne.NewSize(820, 760))
 	w.CenterOnScreen()
 	w.SetCloseIntercept(func() {
+		if s.busy && s.cancel != nil {
+			// a download (nothing is written yet) may be stopped to close
+			s.confirmDialog(s.t("Stop the download?"), s.t("The download stops and the window closes. Nothing was written to the card."), func(ok bool) {
+				if ok && s.cancel != nil {
+					s.closeAfter = true
+					s.cancel()
+				}
+			}, w)
+			return
+		}
 		if s.busy {
 			s.info(s.t("Operation in progress"), s.t("Wait for the operation to finish before closing. Keep the card connected."), w)
 			return
@@ -132,6 +153,7 @@ func Run() {
 		if s.updateCancel != nil {
 			s.updateCancel()
 		}
+		s.stopGuestLookup()
 		w.Close()
 	})
 	if e := jobs.HelperAvailable(); e != nil {
@@ -162,6 +184,21 @@ func (s *screen) t(key string, args ...any) string {
 		key, args = firmware.DTBErrorDetails(key)
 	}
 	return i18n.Text(s.locale, key, args...)
+}
+
+// failureHints is the hint block shown after the error of a failed write: "" for
+// failures that are not the card's or the reader's (flash.FailureHints).
+func (s *screen) failureHints(e error) string {
+	out := ""
+	for _, line := range flash.FailureHints(flash.Classify(e), false) {
+		if out == "" {
+			out = "\n\n"
+		} else {
+			out += "\n"
+		}
+		out += s.t(line)
+	}
+	return out
 }
 
 // busyError: the card's volumes were in use and wouldn't unmount (platform.BusyPrefix)
@@ -359,7 +396,7 @@ func (s *screen) ready() {
 	if s.action == nil {
 		return
 	}
-	if !s.busy && s.im != nil && s.drive != nil && s.card != nil && s.profile != "" && !(s.updating && !s.card.Installed) && !s.tooSmall() {
+	if !s.busy && s.im != nil && s.drive != nil && s.card != nil && s.profile != "" && !(s.updating && !s.card.Installed) && !s.tooSmall() && !s.guestBlocked() {
 		s.action.Enable()
 	} else {
 		s.action.Disable()
@@ -541,11 +578,20 @@ func (s *screen) loadImage(p string, origin ...string) {
 			im, e = firmware.Load(ctx, p, dir, s.progressFn())
 		}
 		fyne.Do(func() {
+			stopped := ctx.Err() != nil
+			cancel()
+			s.cancel = nil
 			s.progress.Hide()
 			s.setBusy(false)
+			if s.closeAfter {
+				s.win.Close()
+				return
+			}
 			if e != nil {
 				s.releaseLabel.SetText(s.t("Image rejected. Choose an andr36oid Treble release."))
-				s.showError(e)
+				if !stopped {
+					s.showError(e)
+				}
 				return
 			}
 			if len(origin) > 0 {
@@ -623,10 +669,14 @@ func (s *screen) populateImage() {
 
 // driveLabel is a drive as the list shows it: fixed disks are marked
 func (s *screen) driveLabel(d platform.Drive) string {
+	label := d.Label()
 	if d.Fixed {
-		return s.t("Not a removable card") + ": " + d.Label()
+		label = s.t("Not a removable card") + ": " + label
 	}
-	return d.Label()
+	if d.WriteProtected {
+		label += " · " + s.t(platform.WriteProtectedReason)
+	}
+	return label
 }
 
 // setAllDrives switches listing fixed disks on (after the warning) or off.
@@ -667,10 +717,18 @@ func (s *screen) populateDrives(reset bool) {
 	}
 	s.driveSelect.OnChanged = func(label string) {
 		for _, d := range s.drives {
-			if s.driveLabel(d) == label {
-				s.inspectDrive(d)
+			if s.driveLabel(d) != label {
+				continue
+			}
+			if d.WriteProtected {
+				// listed so that people find their card, never written
+				s.drive, s.card = nil, nil
+				s.cardLabel.SetText(s.t("This card can't be used: %s.", s.t(platform.WriteProtectedReason)) + " " + s.t("Then refresh the list."))
+				s.ready()
 				break
 			}
+			s.inspectDrive(d)
+			break
 		}
 	}
 	if len(opts) == 0 {
@@ -858,15 +916,28 @@ func (s *screen) download(a catalog.Asset) {
 	s.progress.Show()
 	s.progress.SetValue(0)
 	s.releaseLabel.SetText(s.t("downloading") + ": " + a.Name)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
 	go func() {
 		dir, e := jobs.CacheDir()
 		var p string
 		if e == nil {
-			p, e = catalog.Download(context.Background(), a, dir, s.progressFn())
+			p, e = catalog.Download(ctx, a, dir, s.progressFn())
 		}
 		fyne.Do(func() {
+			stopped := ctx.Err() != nil
+			cancel()
+			s.cancel = nil
 			s.progress.Hide()
 			s.setBusy(false)
+			if s.closeAfter {
+				s.win.Close()
+				return
+			}
+			if stopped {
+				s.releaseLabel.SetText(s.t("Choose a release to see its supported consoles and panels."))
+				return
+			}
 			if e != nil {
 				s.showError(e)
 				return
@@ -883,7 +954,7 @@ func (s *screen) confirm() {
 	if s.updating {
 		mode = "update"
 	}
-	// dArkOSen is downloaded before the question, so that saying yes starts the write
+	// the game system is downloaded before the question, so that saying yes starts the write
 	if s.guestBytes() > 0 && s.guestReady == nil {
 		s.withGuest(func(g *flash.Guest) {
 			s.guestReady = g
@@ -914,9 +985,23 @@ func (s *screen) confirm() {
 	if len(s.drive.Volumes) > 0 {
 		msg += "\n\n" + s.t("Drives of this card that are open on this computer (%s) are closed first.", strings.Join(s.drive.Volumes, ", "))
 	}
+	if mode == "update" && s.guestKept() != "" {
+		msg += "\n\n" + s.guestKept()
+	}
 	// a fixed disk: the plain question isn't enough
 	if s.drive.Fixed {
 		s.agreeDialog(s.t("Write to a disk that is not a removable card?"), s.t("%s is not a removable card. If it is the wrong disk, what is on it is destroyed and cannot be recovered. Check the name and the size once more before you go on.", s.drive.Label())+"\n\n"+msg, s.t("This is the right disk. Write to it."), func(ok bool) {
+			if ok {
+				s.writeWithDTBWarning(p)
+			}
+		})
+		return
+	}
+	// a large drive or a USB hard drive may be the user's backup disk: say its size
+	// and model, and have the user tick that it is the card
+	if s.drive.Large() {
+		size := fmt.Sprintf("%.0f GB", float64(s.drive.Size)/1e9)
+		s.agreeDialog(s.t("Is this really your SD card?"), s.t("%s (%s) is larger than most SD cards, or it says it is a hard drive. If it is not your SD card, everything on it is lost for good. Check the size and the name once more.", s.drive.Name, size)+"\n\n"+msg, s.t("This %s drive (%s) is my SD card. Write to it.", size, s.drive.Name), func(ok bool) {
 			if ok {
 				s.writeWithDTBWarning(p)
 			}
@@ -930,6 +1015,8 @@ func (s *screen) confirm() {
 	}, s.win)
 }
 func (s *screen) write(p *flash.Plan) {
+	// a write is not stopped halfway
+	s.cancel = nil
 	s.setBusy(true)
 	m := newDiskMap()
 	m.plan(p)
@@ -1018,8 +1105,8 @@ func (s *screen) write(p *flash.Plan) {
 			}
 			if e != nil {
 				title.SetText(s.t("Operation could not finish"))
-				phase.SetText(s.t("Check the selected image and card, then try again."))
-				outcome.SetText(s.t("Technical details") + ": " + e.Error())
+				phase.SetText(s.explain(e))
+				outcome.SetText(s.t("Technical details") + ": " + e.Error() + s.failureHints(e))
 				outcome.Importance = widget.DangerImportance
 				outcome.Show()
 				if result.Backup != "" {

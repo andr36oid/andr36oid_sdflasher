@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -254,5 +255,82 @@ func TestGuestOnlyForReleasesThatFit(t *testing.T) {
 	// a release that doesn't say when it was built can't meet a minimum
 	if GuestFits(&firmware.Image{Facts: im.Facts}, &Guest{Minimum: "20261111"}) == nil {
 		t.Fatal("offered without a build date")
+	}
+}
+
+// The record on BOOT names the system for the console. Its keys are the ones the
+// console's partition-pin accepts (format, distribution, darkosen, revision,
+// minimum_andr36oid, image). A release whose console reads the field gets it for every
+// system; an older one only takes dArkOSen, without it, as before.
+func TestGuestRecordNamesTheSystem(t *testing.T) {
+	for _, c := range []struct {
+		in    string
+		reads bool
+		want  string
+		fails bool
+	}{
+		{"dArkOS", true, "dArkOS", false}, {"darkosre", true, "dArkOSRE", false}, {"dArkOSen", true, "dArkOSen", false}, {"", true, "dArkOSen", false},
+		{"dArkOSen", false, "", false}, {"", false, "", false}, {"dArkOS", false, "", true}, {"dArkOSRE", false, "", true},
+	} {
+		g := &Guest{Distribution: c.in, Darkosen: "11072026", Revision: 1, Name: "dArkOS_RG351MP_11072026.erofs.img", Size: 1 << 20, SHA256: strings.Repeat("a", 64)}
+		files, e := (&Plan{Prepared: true, Guest: g, GuestDistribution: c.reads}).BootFiles()
+		if c.fails {
+			if e == nil {
+				t.Fatal(c.in, "written for a console that can't read it")
+			}
+			continue
+		}
+		if e != nil {
+			t.Fatal(c.in, e)
+		}
+		var m map[string]any
+		if e = json.Unmarshal(files[GuestFile], &m); e != nil {
+			t.Fatal(e)
+		}
+		got, has := m["distribution"]
+		if (c.want == "") == has || (has && got != c.want) {
+			t.Fatalf("%q %v: %s", c.in, c.reads, files[GuestFile])
+		}
+		for k := range m {
+			if !strings.Contains("|format|distribution|darkosen|revision|minimum_andr36oid|image|", "|"+k+"|") {
+				t.Fatal("key the console doesn't read:", k)
+			}
+		}
+	}
+	g := &Guest{Distribution: "openwrt", Darkosen: "11072026", Revision: 1, Name: "x.img", Size: 1 << 20, SHA256: strings.Repeat("a", 64)}
+	if _, e := (&Plan{Prepared: true, Guest: g, GuestDistribution: true}).BootFiles(); e == nil {
+		t.Fatal("unknown system written")
+	}
+	if g.DistributionName() != "" || (&Guest{}).DistributionName() != "dArkOSen" {
+		t.Fatal("distribution names")
+	}
+}
+
+// dArkOS and dArkOSRE go only on a card whose release reads "distribution"; the
+// build stamp in the image's identity is compared with the minimum.
+func TestGuestNeedsAReleaseThatReadsTheSystem(t *testing.T) {
+	im := &firmware.Image{Facts: map[string]string{"layout": "prepared-1", "subsystem": "release-1"}, BuildIdentity: "0.9|eng.kenny.20261117.101500"}
+	for _, c := range []struct {
+		minimum string
+		reads   bool
+	}{{"", false}, {"20261117", true}, {"20261117.101500", true}, {"20261117.101501", false}, {"20261118", false}, {"2026111", false}} {
+		if readsDistribution(im, c.minimum) != c.reads {
+			t.Error(c.minimum, !c.reads)
+		}
+	}
+	if readsDistribution(&firmware.Image{BuildIdentity: "no stamp"}, "20261117") {
+		t.Fatal("no stamp counted as new")
+	}
+	// with the placeholder still empty, only dArkOSen fits
+	if MinimumDistributionBuild == "" {
+		if e := GuestFits(im, &Guest{Distribution: "dArkOS"}); !errors.Is(e, ErrGuestNeedsNewerRelease) {
+			t.Fatal(e)
+		}
+		if e := GuestFits(im, &Guest{}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e := GuestFits(im, &Guest{Minimum: "20271231"}); !errors.Is(e, ErrGuestNeedsNewerRelease) {
+		t.Fatal("old release accepted", e)
 	}
 }

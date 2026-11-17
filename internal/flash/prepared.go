@@ -33,10 +33,13 @@ const (
 	GuestFile          = "andr36oid-darkosen.json"
 )
 
-// Guest is a dArkOSen release image the flasher puts on the card: the facts of the
-// release's manifest.json and the unpacked image file.
+// Guest is a game system release image (dArkOS, dArkOSRE or dArkOSen) the flasher
+// puts on the card: the facts of the release's manifest.json and the unpacked image
+// file.
 type Guest struct {
-	Path           string `json:"path"`
+	Path string `json:"path"`
+	// Distribution is the system ("dArkOS", "dArkOSRE", "dArkOSen"); "" is dArkOSen.
+	Distribution   string `json:"distribution,omitempty"`
 	Darkosen       string `json:"darkosen"`
 	Revision       int    `json:"revision"`
 	Minimum        string `json:"minimum_andr36oid"`
@@ -84,7 +87,7 @@ func PreparedLayout(size, appsBytes int64, wantGiB int, noROMs bool, guestBytes 
 	if guestBytes > 0 {
 		start := (last + 1 - (guestBytes+511)/512) / mib * mib
 		if start <= preparedStart {
-			return p, errors.New("this card is too small for dArkOSen")
+			return p, errors.New("this card is too small for the game system")
 		}
 		p.Guest = Span{start, last}
 		last = start - 1
@@ -92,7 +95,7 @@ func PreparedLayout(size, appsBytes int64, wantGiB int, noROMs bool, guestBytes 
 	free := last - preparedStart + 1
 	if free <= 2*apps || (guestBytes > 0 && free*512 < MinPreparedAndroid) {
 		if guestBytes > 0 {
-			return p, errors.New("this card is too small for Android and dArkOSen together")
+			return p, errors.New("this card is too small for Android and the game system together")
 		}
 		return p, errors.New("the card is too small")
 	}
@@ -135,8 +138,8 @@ func (p *Plan) prepare(im *firmware.Image, apps layout.Partition, wantGiB int, n
 			return e
 		}
 		if g.Size <= 0 || g.Size%512 != 0 || g.PartitionBytes < g.Size || len(g.SHA256) != 64 || g.Path == "" ||
-			g.Name == "" || strings.ContainsAny(g.Name, "/\\") {
-			return errors.New("invalid dArkOSen release")
+			g.Name == "" || strings.ContainsAny(g.Name, "/\\") || g.DistributionName() == "" {
+			return errors.New("invalid game system release")
 		}
 		guestBytes = g.PartitionBytes
 	}
@@ -187,14 +190,19 @@ func (p *Plan) prepare(im *firmware.Image, apps layout.Partition, wantGiB int, n
 	}
 	if g != nil {
 		add(14, GuestPartition, parts.Guest, layout.LinuxType)
-		p.Guest = g
-		p.Writes = append(p.Writes, Write{Range: Range{"dArkOSen", parts.Guest.First * 512, g.Size}, Guest: true})
+		p.Guest, p.GuestDistribution = g, ReadsDistribution(im)
+		p.Writes = append(p.Writes, Write{Range: Range{g.DistributionName(), parts.Guest.First * 512, g.Size}, Guest: true})
 	}
 	return nil
 }
 
 // BootFiles are the files that tell the console what the flasher did: the layout it
-// made, and the dArkOSen release it put on the card.
+// made, and the game system release it put on the card (GuestFile, read by the
+// console's erofs support tool: "partition-pin" in PortMaster/erofs-tools). The record
+// names the system in "distribution" (RECORD-FORMAT in the subsystem reports); a
+// console reads a record without it as dArkOSen. Consoles from before the field reject
+// it, so for a release older than MinimumDistributionBuild it is left out, which only
+// dArkOSen may be put on such a card with (GuestFits).
 func (p *Plan) BootFiles() (map[string][]byte, error) {
 	if !p.Prepared {
 		return nil, nil
@@ -213,13 +221,24 @@ func (p *Plan) BootFiles() (map[string][]byte, error) {
 			Size   int64  `json:"size"`
 			SHA256 string `json:"sha256"`
 		}
+		distribution := g.DistributionName()
+		if distribution == "" {
+			return nil, errors.New("invalid game system release")
+		}
+		if !p.GuestDistribution {
+			if distribution != "dArkOSen" {
+				return nil, ErrGuestNeedsNewerRelease
+			}
+			distribution = ""
+		}
 		j, e := json.Marshal(struct {
-			Format   int    `json:"format"`
-			Darkosen string `json:"darkosen"`
-			Revision int    `json:"revision"`
-			Minimum  string `json:"minimum_andr36oid"`
-			Image    image  `json:"image"`
-		}{1, g.Darkosen, g.Revision, g.Minimum, image{g.Name, g.Size, g.SHA256}})
+			Format       int    `json:"format"`
+			Distribution string `json:"distribution,omitempty"`
+			Darkosen     string `json:"darkosen"`
+			Revision     int    `json:"revision"`
+			Minimum      string `json:"minimum_andr36oid"`
+			Image        image  `json:"image"`
+		}{1, distribution, g.Darkosen, g.Revision, g.Minimum, image{g.Name, g.Size, g.SHA256}})
 		if e != nil {
 			return nil, e
 		}
@@ -228,36 +247,106 @@ func (p *Plan) BootFiles() (map[string][]byte, error) {
 	return files, nil
 }
 
+// guestDistributions are the systems a card can carry, as the console names them
+// (it compares them ignoring case).
+var guestDistributions = []string{"dArkOS", "dArkOSRE", "dArkOSen"}
+
+// DistributionName is the system's name in its usual spelling: dArkOSen when the
+// release doesn't say, "" for a name the console doesn't know.
+func (g *Guest) DistributionName() string {
+	if g.Distribution == "" {
+		return "dArkOSen"
+	}
+	for _, d := range guestDistributions {
+		if strings.EqualFold(d, g.Distribution) {
+			return d
+		}
+	}
+	return ""
+}
+
 func serial() uint32 {
 	var b [4]byte
 	rand.Read(b[:])
 	return binary.LittleEndian.Uint32(b[:])
 }
 
+// MinimumDistributionBuild is the first andr36oid build (YYYYMMDD or YYYYMMDD.HHMMSS,
+// as in minimum_andr36oid) whose console reads "distribution" in GuestFile and so can
+// run dArkOS and dArkOSRE from the partition. Older consoles reject the field.
+//
+// PLACEHOLDER: the owner fills this in once that build is known. While it is empty no
+// release counts as new enough: only dArkOSen (written without the field, as before)
+// is offered.
+const MinimumDistributionBuild = ""
+
+// ErrGuestNeedsNewerRelease: the system can't go on a card with this andr36oid
+// release, which is too old to run it.
+var ErrGuestNeedsNewerRelease = errors.New("this game system needs a newer andr36oid release")
+
 var buildStamp = regexp.MustCompile(`(\d{8})\.(\d{6})`)
 var minimumStamp = regexp.MustCompile(`^(\d{8})(?:\.(\d{6}))?$`)
 
-// GuestFits says whether a dArkOSen release may go on a card with this andr36oid
-// release: the image has to say it runs dArkOSen from a partition, and be at least the
-// build the dArkOSen release asks for (YYYYMMDD or YYYYMMDD.HHMMSS, "" for any). The
-// flasher offers dArkOSen only when this is nil.
-func GuestFits(im *firmware.Image, g *Guest) error {
-	if !im.Subsystem() {
-		return errors.New("this release cannot run dArkOSen from its own partition")
+// buildAtLeast compares the image's build stamp with a minimum. The build stamp is
+// the YYYYMMDD.HHMMSS in the image's build identity (andr36oid version and Android
+// incremental, e.g. "...|eng.kenny.20261117.101500"); the minimum is YYYYMMDD
+// (taken as YYYYMMDD.000000), YYYYMMDD.HHMMSS, or an incremental or identity with a
+// YYYYMMDD.HHMMSS in it. Both are compared as the 14 digit
+// strings date+time, which sort like the times they are. ok is false when either
+// has no stamp.
+func buildAtLeast(im *firmware.Image, minimum string) (newer, ok bool) {
+	want := minimumStamp.FindStringSubmatch(minimum)
+	if want == nil {
+		// the console also takes an eng.NAME.YYYYMMDD.HHMMSS incremental, or an
+		// identity with one in it, as the minimum (RECORD-FORMAT)
+		want = buildStamp.FindStringSubmatch(minimum)
 	}
-	if g.Minimum == "" {
-		return nil
-	}
-	want := minimumStamp.FindStringSubmatch(g.Minimum)
 	have := buildStamp.FindStringSubmatch(im.BuildIdentity)
 	if want == nil || have == nil {
-		return errors.New("this dArkOSen release needs a newer flasher or a newer andr36oid release")
+		return false, false
 	}
 	if want[2] == "" {
 		want[2] = "000000"
 	}
-	if have[1]+have[2] < want[1]+want[2] {
-		return fmt.Errorf("this dArkOSen release needs andr36oid %s or newer", g.Minimum)
+	return have[1]+have[2] >= want[1]+want[2], true
+}
+
+// ReadsDistribution says whether the console of this release reads the
+// "distribution" field (MinimumDistributionBuild).
+func ReadsDistribution(im *firmware.Image) bool {
+	return readsDistribution(im, MinimumDistributionBuild)
+}
+
+func readsDistribution(im *firmware.Image, minimum string) bool {
+	if minimum == "" {
+		return false
+	}
+	newer, ok := buildAtLeast(im, minimum)
+	return ok && newer
+}
+
+// GuestFits says whether a game system release may go on a card with this andr36oid
+// release: the image has to say it runs a game system from a partition, be at least
+// the build the release asks for (YYYYMMDD or YYYYMMDD.HHMMSS, "" for any), and for
+// any system but dArkOSen read the "distribution" field (ReadsDistribution). The
+// flasher offers a system only when this is nil; ErrGuestNeedsNewerRelease (wrapped)
+// is the "release too old" answer.
+func GuestFits(im *firmware.Image, g *Guest) error {
+	if !im.Subsystem() {
+		return errors.New("this release cannot run a game system from its own partition")
+	}
+	if g.DistributionName() != "dArkOSen" && !ReadsDistribution(im) {
+		return ErrGuestNeedsNewerRelease
+	}
+	if g.Minimum == "" {
+		return nil
+	}
+	newer, ok := buildAtLeast(im, g.Minimum)
+	if !ok {
+		return errors.New("this game system release needs a newer flasher or a newer andr36oid release")
+	}
+	if !newer {
+		return fmt.Errorf("%w (andr36oid %s or newer)", ErrGuestNeedsNewerRelease, g.Minimum)
 	}
 	return nil
 }

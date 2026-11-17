@@ -2,11 +2,17 @@ package platform
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func diskInfo(args ...string) (map[string]any, error) {
@@ -80,35 +86,11 @@ func list(all bool) ([]Drive, error) {
 		if e != nil {
 			continue
 		}
-		internal, _ := inf["Internal"].(bool)
-		ejectable, _ := inf["Ejectable"].(bool)
-		removable, _ := inf["RemovableMediaOrExternalDevice"].(bool)
-		writable, _ := inf["Writable"].(bool)
-		whole := wholeDisk(inf)
-		// A card in a built-in reader is Internal but ejectable/removable; only a
-		// truly fixed internal disk (the system SSD) is hidden unless ListAll asks.
-		fixed := internal && !ejectable && !removable
-		if (fixed && !all) || !writable || !whole {
-			continue
+		if d, ok := darwinDrive(id, inf, all); ok {
+			out = append(out, d)
 		}
-		size, _ := inf["TotalSize"].(float64)
-		sec, _ := inf["DeviceBlockSize"].(float64)
-		name, _ := inf["MediaName"].(string)
-		serial, _ := inf["DiskUUID"].(string)
-		out = append(out, Drive{Path: "/dev/" + id, Name: name, Serial: serial, Size: int64(size), SectorSize: int64(sec), Fixed: fixed})
 	}
 	return out, nil
-}
-
-// wholeDisk reports whether "diskutil info -plist" describes a whole disk rather
-// than a partition. diskutil names the key "WholeDisk"; there is no "Whole" key,
-// and reading only that one skipped every disk, so no card was ever listed.
-func wholeDisk(inf map[string]any) bool {
-	if v, ok := inf["WholeDisk"].(bool); ok {
-		return v
-	}
-	v, _ := inf["Whole"].(bool)
-	return v
 }
 
 func Open(d Drive, write bool) (*Handle, error) {
@@ -116,21 +98,57 @@ func Open(d Drive, write bool) (*Handle, error) {
 	if e != nil {
 		return nil, e
 	}
+	if write && d.WriteProtected {
+		return nil, errWriteProtected
+	}
+	var lock *os.File
 	if write {
+		// Two flashers must not write one card: a lock file named after the disk
+		// (the helper runs as root, so /var/run is the same for every user)
+		if lock, e = lockDisk(d.Path); e != nil {
+			return nil, e
+		}
 		if b, e := exec.Command("/usr/sbin/diskutil", "unmountDisk", d.Path).CombinedOutput(); e != nil {
+			lock.Close()
 			return nil, fmt.Errorf("%s%s (%s)", BusyPrefix, d.Path, strings.TrimSpace(string(b)))
 		}
 	}
 	flag := os.O_RDONLY
 	if write {
-		flag = os.O_RDWR
+		// O_EXLOCK: also an exclusive lock on the disk itself, where the system
+		// supports one on a device
+		flag = os.O_RDWR | unix.O_EXLOCK | unix.O_NONBLOCK
 	}
-	f, e := os.OpenFile(strings.Replace(d.Path, "/dev/disk", "/dev/rdisk", 1), flag, 0)
+	raw := strings.Replace(d.Path, "/dev/disk", "/dev/rdisk", 1)
+	f, e := os.OpenFile(raw, flag, 0)
+	if write && e != nil && (errors.Is(e, unix.ENOTSUP) || errors.Is(e, unix.EOPNOTSUPP) || errors.Is(e, unix.EINVAL)) {
+		f, e = os.OpenFile(raw, os.O_RDWR, 0)
+	}
 	if e != nil {
+		if lock != nil {
+			lock.Close()
+		}
+		if errors.Is(e, unix.EAGAIN) || errors.Is(e, unix.EWOULDBLOCK) {
+			return nil, fmt.Errorf("%s%s (another program has it open for writing)", BusyPrefix, d.Path)
+		}
 		return nil, e
 	}
+	if write {
+		// back to blocking I/O for the write itself
+		unix.SetNonblock(int(f.Fd()), false)
+	}
 	h := &Handle{File: f}
+	// macOS mounts the card's partitions again as soon as they appear (the new
+	// partition table makes them appear); keep them unmounted until the end
+	stop := func() {}
+	if write {
+		stop = keepUnmounted(d.Path)
+	}
 	h.Cleanup = func() {
+		stop()
+		if lock != nil {
+			lock.Close()
+		}
 		if !write {
 			return
 		}
@@ -141,4 +159,57 @@ func Open(d Drive, write bool) (*Handle, error) {
 		}
 	}
 	return h, nil
+}
+
+// lockDisk takes the flasher's lock on the disk at path (/dev/diskN): a lock file
+// named after the disk, held with flock until it is closed. A second flasher gets a
+// BusyPrefix error.
+func lockDisk(path string) (*os.File, error) {
+	name := "andr36oid-sdflasher-" + filepath.Base(path) + ".lock"
+	var f *os.File
+	var e error
+	for _, dir := range []string{"/var/run", "/tmp"} {
+		if f, e = os.OpenFile(filepath.Join(dir, name), os.O_RDWR|os.O_CREATE, 0600); e == nil {
+			break
+		}
+	}
+	if e != nil {
+		// no place for the lock: the exclusive open of the disk still guards it
+		return nil, nil
+	}
+	if e = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); e != nil {
+		f.Close()
+		return nil, fmt.Errorf("%s%s (another andr36oid SD Flasher is writing this card)", BusyPrefix, path)
+	}
+	return f, nil
+}
+
+// keepUnmounted unmounts the disk's volumes again whenever macOS mounts one, until
+// the returned function is called.
+func keepUnmounted(disk string) func() {
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tick := time.NewTicker(2 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				if out, e := exec.Command("/sbin/mount").Output(); e == nil && mountedFrom(string(out), disk) {
+					exec.Command("/usr/sbin/diskutil", "unmountDisk", disk).Run()
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(done)
+			wg.Wait()
+		})
+	}
 }

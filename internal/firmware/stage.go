@@ -76,6 +76,9 @@ func stage(ctx context.Context, src, dir string, progress func(int64, int64), di
 	if entry.UncompressedSize64 > uint64(MaxImageSize) {
 		return "", errors.New("image is too large")
 	}
+	if e = CheckSpace(dir, int64(entry.UncompressedSize64)); e != nil {
+		return "", e
+	}
 	if e = os.MkdirAll(dir, 0700); e != nil {
 		return "", e
 	}
@@ -160,6 +163,9 @@ func stageGzip(ctx context.Context, src, dir string, progress func(int64, int64)
 	if e != nil {
 		return "", e
 	}
+	if e = CheckSpace(dir, gzipSize(f, st.Size())); e != nil {
+		return "", e
+	}
 	in := &counted{r: f}
 	z, e := gzip.NewReader(bufio.NewReaderSize(in, 1<<20))
 	if e != nil {
@@ -214,4 +220,21 @@ func stageGzip(ctx context.Context, src, dir string, progress func(int64, int64)
 	}
 	ok = true
 	return name, nil
+}
+
+// gzipSize is the least an .img.gz of size bytes unpacks to: its trailer has the
+// unpacked size modulo 4 GiB, and an image is never smaller than its packed file.
+func gzipSize(f io.ReaderAt, size int64) int64 {
+	var b [4]byte
+	if size < 18 {
+		return 0
+	}
+	if _, e := f.ReadAt(b[:], size-4); e != nil {
+		return 0
+	}
+	n := int64(b[0]) | int64(b[1])<<8 | int64(b[2])<<16 | int64(b[3])<<24
+	for n < size && n+1<<32 <= MaxImageSize {
+		n += 1 << 32
+	}
+	return n
 }

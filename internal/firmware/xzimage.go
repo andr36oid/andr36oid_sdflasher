@@ -234,6 +234,15 @@ func stageXZ(ctx context.Context, src, dir string, progress func(int64, int64), 
 	if e != nil && !errors.Is(e, errNotSingleStream) {
 		return "", fmt.Errorf("damaged archive: %w", e)
 	}
+	// the index says how large the image is; an archive of several streams
+	// doesn't, at least the packed size then
+	need := st.Size()
+	if layout != nil {
+		need = layout.size
+	}
+	if e = CheckSpace(dir, need); e != nil {
+		return "", e
+	}
 	if e = os.MkdirAll(dir, 0700); e != nil {
 		return "", e
 	}

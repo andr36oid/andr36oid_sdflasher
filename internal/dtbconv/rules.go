@@ -1148,7 +1148,4 @@ func (c *conv) model() error {
 	return nil
 }
 
-// trimNul is used by tests.
 func u32bytes(v uint32) []byte { return []byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)} }
-
-func trimNul(b []byte) string { return string(bytes.TrimRight(b, "\x00")) }

@@ -10,7 +10,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -215,12 +214,6 @@ func (t *Tree) reindex() {
 	walk(t.Root)
 }
 
-// Clone makes a deep copy.
-func (t *Tree) Clone() *Tree {
-	c, _ := Parse(t.Bytes())
-	return c
-}
-
 // Node returns the node at an absolute path ("/dsi@ff450000/panel@0").
 func (t *Tree) Node(path string) *Node {
 	n := t.Root
@@ -423,14 +416,4 @@ func cellBytes(v []uint32) []byte {
 		binary.BigEndian.PutUint32(b[i*4:], x)
 	}
 	return b
-}
-
-// sortedKeys is a small helper for stable reports.
-func sortedKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

@@ -115,6 +115,12 @@ func (s *Session) ApplyDTBPack(d Disk, input string, observer Observer) (string,
 	return s.dtbOperation(d, input, observer, true)
 }
 
+// imageDTBSetup and fetchDTBPack are firmware's (the tests replace them).
+var (
+	imageDTBSetup = firmware.ImageDTBSetup
+	fetchDTBPack  = firmware.FetchDTBPack
+)
+
 // Select an offline set, or look up the current image's release when file is empty.
 func (s *Session) ImageDTBs(file string) (string, error) {
 	s.mu.Lock()
@@ -126,11 +132,11 @@ func (s *Session) ImageDTBs(file string) (string, error) {
 	var p *firmware.DTBPack
 	var e error
 	if file == "" {
-		setup, e := firmware.ImageDTBSetup(im)
-		if e != nil {
-			return "", e
+		setup, err := imageDTBSetup(im)
+		if err != nil {
+			return "", err
 		}
-		p, e = firmware.FetchDTBPack(context.Background(), setup, s.dir)
+		p, e = fetchDTBPack(context.Background(), setup, s.dir)
 	} else {
 		p, e = firmware.ReadDTBPack(file)
 	}

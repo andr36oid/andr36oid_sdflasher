@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 )
 
@@ -137,7 +138,7 @@ func verify(ctx context.Context, dst, src io.ReaderAt, doff, soff, n int64, cb f
 			return e
 		}
 		if !bytes.Equal(a[:sz], b[:sz]) {
-			return fmt.Errorf("read-back mismatch at byte %d", doff+off)
+			return NewFailure(FailureVerify, fmt.Errorf("read-back mismatch at byte %d", doff+off))
 		}
 		off += sz
 		if cb != nil {
@@ -146,6 +147,11 @@ func verify(ctx context.Context, dst, src io.ReaderAt, doff, soff, n int64, cb f
 	}
 	return nil
 }
+
+// forgetCached is dropCached; tests replace it to see that every read-back is preceded
+// by it.
+var forgetCached = dropCached
+
 func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootPath, backupDir string, notify func(Progress)) error {
 	if e := p.Validate(); e != nil {
 		return e
@@ -153,7 +159,7 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 	if e := checkCompressedUserdata(dst, p, im.Facts["f2fs_compression"]); e != nil {
 		return e
 	}
-	dst = &guardedDevice{Device: dst, plan: p}
+	dst = &guardedDevice{Device: deviceErrors{dst}, plan: p}
 	src, e := os.Open(im.Path)
 	if e != nil {
 		return e
@@ -192,7 +198,7 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 			return e
 		}
 		if gst.Size() != p.Guest.Size {
-			return errors.New("the dArkOSen image is not the size its release says")
+			return errors.New("the game system download is not the size its release says")
 		}
 	}
 	for _, w := range p.Writes {
@@ -207,7 +213,7 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 		}
 		if w.Guest {
 			if guest == nil || w.Length != p.Guest.Size {
-				return errors.New("dArkOSen image missing")
+				return errors.New("game system download missing")
 			}
 			continue
 		}
@@ -244,13 +250,13 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 	}
 	if guest != nil {
 		gsum, e := firmware.Hash(ctx, guest, p.Guest.Size, func(n, total int64) {
-			notify(Progress{Phase: "preflight", Name: "Checking dArkOSen", Done: n, Total: total})
+			notify(Progress{Phase: "preflight", Name: "Checking the game system", Done: n, Total: total})
 		})
 		if e != nil {
 			return e
 		}
 		if gsum != p.Guest.SHA256 {
-			return errors.New("the dArkOSen image is damaged; download it again")
+			return errors.New("the game system download is damaged; download it again")
 		}
 	}
 	snap, e := Snapshot(dst, p.Size)
@@ -272,6 +278,18 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 			}
 		}
 		notify(Progress{Phase: "preflight", Name: "Reading the card before writing", Done: int64(i + 1), Total: int64(len(p.Writes))})
+	}
+	// A counterfeit card stops here, before the release is written (capacity.go).
+	if p.Mode == "install" && len(p.Probes) > 0 {
+		if e = checkCapacity(ctx, dst, p, notify); e != nil {
+			if wp := WriteProtectedError(e); wp != nil && !dst.(*guardedDevice).wrote.Load() {
+				return wp
+			}
+			if Classify(e) == FailureCapacity {
+				return e
+			}
+			return fmt.Errorf("%w; installation is incomplete, run Install again before using the card", e)
+		}
 	}
 	var backup *Backup
 	if p.Mode == "update" {
@@ -304,16 +322,20 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 	}
 	var done int64
 	fail := func(cause error) error {
+		// a card that refuses the very first write still has all it had
+		if wp := WriteProtectedError(cause); wp != nil && !dst.(*guardedDevice).wrote.Load() {
+			return wp
+		}
 		if backup != nil {
 			notify(Progress{Phase: "restoring", Name: "Restoring the previous installation"})
 			if e := restore(context.Background(), dst, backupDir, backup); e != nil {
-				return fmt.Errorf("%v; automatic restore failed: %v. Keep the card out of the console. Recovery backup: %s", cause, e, backupDir)
+				return fmt.Errorf("%w; %w: %v. Keep the card out of the console. Recovery backup: %s", cause, ErrRestoreFailed, e, backupDir)
 			}
-			return fmt.Errorf("%v; the previous installation was restored and verified", cause)
+			return fmt.Errorf("%w; the previous installation was restored and verified", cause)
 		}
-		return fmt.Errorf("%v; installation is incomplete, run Install again before using the card", cause)
+		return fmt.Errorf("%w; installation is incomplete, run Install again before using the card", cause)
 	}
-	notify(Progress{Phase: "preflight", Name: "Checking card speed"})
+	notify(Progress{Phase: "preflight", Name: SpeedCheck})
 	speed, e := measureLatency(ctx, dst, p)
 	if e != nil {
 		return fail(e)
@@ -335,6 +357,7 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 			bulkBytes += w.Length
 			bulkTime += time.Since(started)
 		}
+		forgetCached(dst, w.Offset, w.Length)
 		if e = verify(ctx, dst, r, w.Offset, off, w.Length, func(n int64) {
 			notify(Progress{Phase: "verifying", Name: w.Name, Done: done + n, Total: total, Offset: w.Offset, Length: n})
 		}); e != nil {
@@ -343,6 +366,7 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 		done += w.Length
 	}
 	// Fresh installs write a prepared BOOT after the source payload; updates already included it.
+	var extra []Write
 	if p.Mode == "install" {
 		part, _ := im.Table.Find("BOOT")
 		if e = copyRange(ctx, dst, boot, part.Offset(), 0, part.Size(), func(n int64) {
@@ -353,10 +377,17 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 		if e = dst.Sync(); e != nil {
 			return fail(e)
 		}
+		forgetCached(dst, part.Offset(), part.Size())
 		if e = verify(ctx, dst, boot, part.Offset(), 0, part.Size(), nil); e != nil {
 			return fail(e)
 		}
 		notify(Progress{Phase: "verifying", Name: "Device setup", Done: part.Size(), Total: part.Size(), Offset: part.Offset(), Length: part.Size()})
+		extra = append(extra, Write{Range: Range{"Device setup", part.Offset(), part.Size()}, Boot: true})
+	}
+	// What a later write may have wrapped onto (capacity.go)
+	notify(Progress{Phase: "verifying", Name: "Checking the whole card once more"})
+	if e = verifyEnds(ctx, dst, p, extra, sourceFor); e != nil {
+		return fail(e)
 	}
 	if bulkTime > 0 {
 		speed.WriteMBps = float64(bulkBytes) / (1 << 20) / bulkTime.Seconds()
@@ -451,6 +482,7 @@ func restore(ctx context.Context, dst Device, dir string, b *Backup) error {
 			e = dst.Sync()
 		}
 		if e == nil {
+			forgetCached(dst, ent.Offset, ent.Length)
 			e = verify(ctx, dst, f, ent.Offset, 0, ent.Length, nil)
 		}
 		f.Close()
@@ -466,6 +498,26 @@ func Digest(data []byte) string { s := sha256.Sum256(data); return hex.EncodeToS
 type guardedDevice struct {
 	Device
 	plan *Plan
+	// wrote: a write reached the card
+	wrote atomic.Bool
+}
+
+// SpeedCheck is the progress of the speed check, the first step that writes to the
+// card (Progress.Writing).
+const SpeedCheck = "Checking card speed"
+
+// SizeCheck is the progress of checkCapacity, which writes markers (and puts back
+// what was there).
+const SizeCheck = "Checking the card size"
+
+// Writing says whether an Execute that sent p has begun to change the card: after a
+// failure from here on the card is incomplete (or restored, for an update).
+func (p Progress) Writing() bool {
+	switch p.Phase {
+	case "writing", "verifying", "restoring", "speed", "complete":
+		return true
+	}
+	return p.Name == SpeedCheck || p.Name == SizeCheck
 }
 
 func (g *guardedDevice) WriteAt(b []byte, off int64) (int, error) {
@@ -478,12 +530,21 @@ func (g *guardedDevice) WriteAt(b []byte, off int64) (int, error) {
 			return 0, fmt.Errorf("blocked write into %s", r.Name)
 		}
 	}
+	allowed := false
 	for _, w := range g.plan.Writes {
-		if off >= w.Offset && off+n <= w.End() {
-			return g.Device.WriteAt(b, off)
-		}
+		allowed = allowed || off >= w.Offset && off+n <= w.End()
 	}
-	return 0, errors.New("write outside the approved plan")
+	for _, r := range g.plan.Probes {
+		allowed = allowed || off >= r.Offset && off+n <= r.End()
+	}
+	if !allowed {
+		return 0, errors.New("write outside the approved plan")
+	}
+	w, e := g.Device.WriteAt(b, off)
+	if w > 0 {
+		g.wrote.Store(true)
+	}
+	return w, e
 }
 
 // RestoreBackup verifies the saved regions completely before opening a write path.
@@ -526,7 +587,7 @@ func restoreBackup(ctx context.Context, dst Device, dir string, size int64, chec
 			return e
 		}
 	}
-	return restore(ctx, &guardedDevice{Device: dst, plan: p}, dir, &b)
+	return restore(ctx, &guardedDevice{Device: deviceErrors{dst}, plan: p}, dir, &b)
 }
 
 type zeros struct{}

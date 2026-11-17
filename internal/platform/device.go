@@ -17,7 +17,28 @@ type Drive struct {
 	// Fixed: not a USB or SD/MMC card reader. Only ListAll shows these, and only
 	// for advanced users; the disk the computer runs from is never listed.
 	Fixed bool `json:"fixed,omitempty"`
+	// WriteProtected: the card's lock switch is on (or the reader says it is read
+	// only). Listed so that people see their card, but never written.
+	WriteProtected bool `json:"write_protected,omitempty"`
+	// External: a USB disk that says it is a fixed or hard disk rather than a card
+	// in a reader (a USB hard drive or SSD).
+	External bool `json:"external,omitempty"`
 }
+
+// WriteProtectedReason is why a write-protected card can't be chosen (an en.json
+// key; the apps translate it).
+const WriteProtectedReason = "write-protected: slide the lock switch on the card or adapter"
+
+// errWriteProtected: Open for writing refused a write-protected card.
+var errWriteProtected = errors.New("the card is write-protected")
+
+// LargeBytes: a drive above this is bigger than most SD cards ("256 GB" cards hold
+// less than 256 GB, "512 GB" ones more).
+const LargeBytes = 256e9
+
+// Large: a drive bigger than LargeBytes or one that says it is a hard disk; the
+// apps ask once more, naming its size and model, before writing it.
+func (d Drive) Large() bool { return d.Size > LargeBytes || d.External }
 
 // List returns the removable cards: USB card readers and SD/MMC slots.
 func List() ([]Drive, error) { return list(false) }

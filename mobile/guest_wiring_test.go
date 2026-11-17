@@ -75,13 +75,13 @@ func TestGuestPreviewNeverAuthorizesWrite(t *testing.T) {
 	g.Image.Name = "darkosen.erofs.img"
 	g.Image.Size = 1 << 20
 	g.Image.SHA256 = strings.Repeat("a", 64)
-	s := &Session{dir: t.TempDir(), image: &firmware.Image{SHA256: "one"}, guest: g, guestFor: "one"}
+	s := &Session{dir: t.TempDir(), image: &firmware.Image{SHA256: "one"}, guests: map[string]*catalog.GuestRelease{"dArkOSen": g}, guestPaths: map[string]string{}, guestFor: "one"}
 	opts := options{Mode: "install", Guest: true}
 	preview, e := s.guestForOptions(opts, true)
 	if e != nil || preview == nil || preview.Path == "" || preview.PartitionBytes != 4<<30 {
 		t.Fatal(preview, e)
 	}
-	if s.guestPath != "" {
+	if s.guestPaths["dArkOSen"] != "" {
 		t.Fatal("preview saved as download")
 	}
 	if _, e = s.guestChoice(opts); e == nil {
@@ -93,9 +93,9 @@ func TestGuestPreviewNeverAuthorizesWrite(t *testing.T) {
 	if _, e = os.Stat(preview.Path); !os.IsNotExist(e) {
 		t.Fatal("preview created payload", e)
 	}
-	s.guestPath = filepath.Join(s.dir, "verified-image")
+	s.guestPaths["dArkOSen"] = filepath.Join(s.dir, "verified-image")
 	actual, e := s.guestChoice(opts)
-	if e != nil || actual.Path != s.guestPath {
+	if e != nil || actual.Path != s.guestPaths["dArkOSen"] {
 		t.Fatal(actual, e)
 	}
 	s.image = &firmware.Image{SHA256: "new"}
@@ -129,7 +129,7 @@ func TestGuestReviewPlanAndStrictWriteOnRealRelease(t *testing.T) {
 	g.Image.Name = "darkosen.erofs.img"
 	g.Image.Size = 1 << 20
 	g.Image.SHA256 = strings.Repeat("a", 64)
-	s := &Session{dir: dir, image: im, guest: g, guestFor: im.SHA256}
+	s := &Session{dir: dir, image: im, guests: map[string]*catalog.GuestRelease{"dArkOSen": g}, guestPaths: map[string]string{}, guestFor: im.SHA256}
 	raw, _ := json.Marshal(options{Mode: "install", Profile: "Experimental/R36-Ultra", Identity: d.Identity(), Fingerprint: card.Fingerprint, Guest: true})
 	plan, e := s.Plan(d, string(raw))
 	if e != nil {
@@ -148,7 +148,27 @@ func TestGuestReviewPlanAndStrictWriteOnRealRelease(t *testing.T) {
 	if _, e = s.Write(d, string(raw), nil); e == nil || !strings.Contains(e.Error(), "download dArkOSen first") {
 		t.Fatal("write before download", e)
 	}
-	if d.writes != 0 || d.flushes != 0 || s.guestPath != "" {
+	if d.writes != 0 || d.flushes != 0 || s.guestPaths["dArkOSen"] != "" {
 		t.Fatal("review/download refusal changed card or session")
+	}
+}
+
+// On Android the hints add that some phones can't do this at all; a failure that is
+// not the card's or the reader's has none.
+func TestAndroidFailureHints(t *testing.T) {
+	s := &Session{failure: flash.FailureVerify}
+	h := s.LastFailureHints()
+	if !strings.HasPrefix(h, "The card may be faulty") || !strings.Contains(h, "Try a different card reader.") || !strings.HasSuffix(h, "If so, use a computer.") {
+		t.Fatal(h)
+	}
+	if s.failure = flash.FailureOther; s.LastFailureHints() != "" {
+		t.Fatal("hints for a failure that isn't the card's")
+	}
+	if r := ReaderFailureHints(); !strings.Contains(r, "Android phones") || strings.Contains(r, "faulty") {
+		t.Fatal(r)
+	}
+	d := &usbDisk{disk: &fakeDisk{size: 64 << 30}, size: 64 << 30}
+	if _, e := d.ReadAt(make([]byte, 512), 1); flash.Classify(e) != flash.FailureOther {
+		t.Fatal("a wrong range is not the card's fault", e)
 	}
 }

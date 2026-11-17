@@ -37,8 +37,12 @@ public final class MainActivity extends Activity {
   private TextView imageLabel, cardLabel, status, customLabel, mapLegend, usbNotice;
   private Button language, console, profile, chooseCard, action, stop;
   private final List<View> controls = new ArrayList<>();
-  private CheckBox noROMs, guest;
-  private TextView guestInfo;
+  private CheckBox noROMs;
+  private RadioGroup guestGroup;
+  private final java.util.List<RadioButton> guestButtons = new java.util.ArrayList<>();
+  private final java.util.List<String> guestIds = new java.util.ArrayList<>();
+  private boolean guestUpdating;
+  private TextView guestInfo, guestIntro;
   private LinearLayout guestBox;
   private RadioButton install, update;
   private BootOptionsView bootOptionsView;
@@ -72,9 +76,9 @@ public final class MainActivity extends Activity {
           if ((getPackageName() + ".USB_PERMISSION").equals(intent.getAction())) {
             UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
             UsbCard pendingReader = WorkState.pendingReader;
+            // no device in the answer: it is still the answer to the pending request
             if (pendingReader != null
-                && device != null
-                && device.getDeviceId() == pendingReader.device.getDeviceId()) {
+                && (device == null || device.getDeviceId() == pendingReader.device.getDeviceId())) {
               WorkState.pendingReader = null;
               if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false))
                 discover(pendingReader);
@@ -411,7 +415,6 @@ public final class MainActivity extends Activity {
     modes.setOnCheckedChangeListener(
         (g, id) -> {
           WorkState.update = id == update.getId();
-          if (WorkState.update) WorkState.guest = false;
           if (WorkState.update && WorkState.card != null)
             WorkState.noROMs = WorkState.card.optBoolean("no_roms");
           WorkState.revision++;
@@ -462,17 +465,36 @@ public final class MainActivity extends Activity {
     storage.addView(sizeAuto);
     guestBox = new LinearLayout(this);
     guestBox.setOrientation(LinearLayout.VERTICAL);
-    guest = new CheckBox(this);
-    guestBox.addView(guest);
+    guestIntro =
+        label(t("Choose one system to put on the card now. You can add more later on the console."), false);
+    for (TextView view : new TextView[] {label(t("Game system"), true), guestIntro}) {
+      target.removeView(view);
+      guestBox.addView(view);
+    }
+    guestGroup = new RadioGroup(this);
+    for (String id : new String[] {"dArkOS", "dArkOSRE", "dArkOSen", "none"}) {
+      RadioButton button = new RadioButton(this);
+      button.setId(View.generateViewId());
+      guestGroup.addView(button);
+      guestButtons.add(button);
+      guestIds.add(id);
+      controls.add(button);
+    }
+    guestBox.addView(guestGroup);
+    guestGroup.setOnCheckedChangeListener(
+        (g, id) -> {
+          if (guestUpdating) return;
+          for (int n = 0; n < guestButtons.size(); n++)
+            if (guestButtons.get(n).getId() == id) {
+              WorkState.guestChoice = guestIds.get(n);
+              WorkState.guestChosen = true;
+            }
+          WorkState.revision++;
+        });
     guestInfo = new TextView(this);
     guestInfo.setTextColor(getColor(R.color.body_text));
     guestBox.addView(guestInfo);
     target.addView(guestBox);
-    guest.setOnCheckedChangeListener(
-        (b, checked) -> {
-          WorkState.guest = checked;
-          WorkState.revision++;
-        });
     try{bootOptionsView=new BootOptionsView(WorkState.bootloaderOptions(),bootContext(null),c->{WorkState.bootloaderChoice=c.optString("choice","image");WorkState.bootChain=c.optString("chain","standard");WorkState.sleepFirmware=c.optString("sleep","image");WorkState.forceBootOptions=c.optBoolean("force_boot_options");WorkState.revision++;});target.addView(bootOptionsView);}catch(Exception e){showError(e.toString());}
     systemLabel = label("", false);
     button(
@@ -536,6 +558,7 @@ public final class MainActivity extends Activity {
               }
               fetchHotfixes(WorkState.selected, "");
             }));
+    quiet(button("Free up space", v -> freeSpace()));
     quiet(button("About and licenses", v -> about()));
     label(BuildConfig.VERSION_NAME + " · GPLv3", false);
     rendered = -1;
@@ -665,7 +688,7 @@ public final class MainActivity extends Activity {
     systemLabel.setText(systemText());
     boolean ready = true;
     for (int n = 0; n < 4; n++) ready &= stepDone(n);
-    action.setEnabled(!busy && ready && !(!WorkState.update && tooSmall()));
+    action.setEnabled(!busy && ready && !(!WorkState.update && tooSmall()) && !WorkState.guestBlocked());
     // red for an erase, the accent for an update: the same emphasis the desktop app uses
     emphasize(action, WorkState.update ? getColor(R.color.accent) : DANGER);
     action.setAlpha(action.isEnabled() ? 1f : 0.45f);
@@ -727,13 +750,17 @@ public final class MainActivity extends Activity {
     status.setText(
         !WorkState.error.isEmpty()
             ? stopped()
-                ? t("Writing stopped")
-                : t("Operation could not finish") + "\n" + WorkState.error
+                ? WorkState.error.startsWith(Mobile.StoppedIncomplete)
+                    ? t("Writing stopped. The card is incomplete and has to be written again before you use it.")
+                    : WorkState.error.startsWith(Mobile.StoppedDownload)
+                        ? t("The game system was not downloaded. Nothing was written to the card.")
+                        : t("Writing stopped")
+                : t("Operation could not finish") + "\n" + explained(WorkState.error)
             : busy && stall > 0
                 ? t(
                     "The card reader has not answered for %d seconds. If this does not change,"
                         + " unplug the reader: the operation then stops with an error and you"
-                        + " can try again, or use the Windows or Linux flasher.",
+                        + " can try again, or use the flasher for Windows, macOS or Linux.",
                     stall)
                 : t(busy ? (phase.isEmpty() ? "Working…" : phase) : WorkState.message)
                     + (busy && p != null && p.has("name") ? ": " + t(p.optString("name")) : ""));
@@ -1022,8 +1049,8 @@ public final class MainActivity extends Activity {
           .setMessage(
               t(
                   "This device does not have enough free storage to hold the file: %.1f GB"
-                      + " needed, %.1f GB free. Free up space, or use the Windows or Linux"
-                      + " flasher.",
+                      + " needed, %.1f GB free. Free up space, or use the flasher for Windows,"
+                      + " macOS or Linux.",
                   size / 1e9,
                   free / 1e9))
           .setPositiveButton(t("OK"), null)
@@ -1282,7 +1309,12 @@ public final class MainActivity extends Activity {
                         this,
                         0,
                         permission,
-                        PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
+                        // Android adds the answer (granted, device) to this intent, so
+                        // it must be mutable on API 31+; it is explicit (this package
+                        // only), as Android 14 requires for a mutable one
+                        Build.VERSION.SDK_INT >= 31
+                            ? PendingIntent.FLAG_MUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
+                            : PendingIntent.FLAG_UPDATE_CURRENT));
               }
             })
         .setOnCancelListener(d -> WorkState.choosingHotfixCard = false)
@@ -1420,12 +1452,24 @@ public final class MainActivity extends Activity {
                   app,
                   true,
                   () -> {
-                    WorkState.prepareGuest(input);
+                    // the download can be stopped too (nothing is written yet)
+                    WorkState.downloading = true;
+                    WorkState.cancelable = true;
+                    WorkState.revision++;
+                    try {
+                      WorkState.prepareGuest(input);
+                    } finally {
+                      WorkState.downloading = false;
+                    }
                     try (UsbCard.Connection disk = target.open(app)) {
                       WorkState.speed = null;
                       WorkState.cancelable = true;
                       WorkState.revision++;
-                      WorkState.result = WorkState.engine.write(disk, input, WorkState::event);
+                      try {
+                        WorkState.result = WorkState.engine.write(disk, input, WorkState::event);
+                      } catch (Exception e) {
+                        throw withHints(e, WorkState.engine.lastFailureHints());
+                      }
                       WorkState.cancelable = false;
                       WorkState.message =
                           updating
@@ -1446,10 +1490,23 @@ public final class MainActivity extends Activity {
                       WorkState.card = null;
                       WorkState.hotfixTarget = target;
                       WorkState.hotfixAfterFlash = true;
+                    } catch (java.io.IOException e) {
+                      // the reader could not be opened or talked to
+                      throw withHints(e, Mobile.readerFailureHints());
                     }
                   }));
             })
         .show();
+  }
+
+  // e with the hint block after its message: hints are English lines (from the engine),
+  // shown translated. The message's start is kept (the stopped check reads it).
+  private Exception withHints(Exception e, String hints) {
+    if (hints == null || hints.isEmpty()) return e;
+    StringBuilder text = new StringBuilder(e.getMessage() == null ? e.toString() : e.getMessage());
+    text.append("\n");
+    for (String line : hints.split("\n")) text.append("\n").append(t(line));
+    return new Exception(text.toString(), e);
   }
 
   private void fetchHotfixes(UsbCard target, String expectedBuild) {
@@ -1682,7 +1739,7 @@ public final class MainActivity extends Activity {
         return new JSONObject(
             Mobile.storageLayout(WorkState.selected.bytes, WorkState.userdataGiB));
       long guestBytes =
-          WorkState.guestSelected() ? WorkState.guestOffer.optLong("partition_bytes") : 0;
+          WorkState.guestSelected() != null ? WorkState.guestSelected().optLong("partition_bytes") : 0;
       return new JSONObject(
           Mobile.storageLayoutForImage(
               WorkState.image.toString(),
@@ -1705,37 +1762,136 @@ public final class MainActivity extends Activity {
     return String.format(Locale.getDefault(), "%d B", n);
   }
 
+  // One choice of game system: dArkOS (preselected), dArkOSRE, dArkOSen or none, as
+  // in the desktop flasher. Each says why it can't be chosen.
   private void renderGuest(boolean busy) {
     WorkState.lookupGuestOffer();
-    JSONObject offer = WorkState.guestOffer;
-    boolean show = !WorkState.update && offer != null;
+    // an update keeps the system that is on the card
+    String kept = guestKept();
+    if (WorkState.update && !kept.isEmpty()) {
+      guestBox.setVisibility(View.VISIBLE);
+      guestGroup.setVisibility(View.GONE);
+      guestIntro.setVisibility(View.GONE);
+      guestInfo.setText(kept);
+      return;
+    }
+    guestGroup.setVisibility(View.VISIBLE);
+    guestIntro.setVisibility(View.VISIBLE);
+    boolean show = !WorkState.update && (WorkState.guestLooking || WorkState.guestOffers != null);
     guestBox.setVisibility(show ? View.VISIBLE : View.GONE);
     if (!show) return;
-    boolean fits = true;
-    if (WorkState.selected != null && WorkState.image != null) {
-      try {
-        Mobile.storageLayoutForImage(
-            WorkState.image.toString(),
-            WorkState.selected.bytes,
-            WorkState.userdataGiB,
-            WorkState.noROMs,
-            offer.optLong("partition_bytes"));
-      } catch (Exception e) {
-        fits = false;
+    WorkState.guestDefault();
+    String info = t("No system is put on the card. You can add one later on the console.");
+    guestUpdating = true;
+    for (int n = 0; n < guestIds.size(); n++) {
+      String id = guestIds.get(n);
+      RadioButton button = guestButtons.get(n);
+      button.setEnabled(!busy);
+      boolean chosen = id.equals(WorkState.guestChoice);
+      if (chosen != button.isChecked()) button.setChecked(chosen);
+      if ("none".equals(id)) {
+        button.setText(t("None"));
+        continue;
       }
+      JSONObject offer = WorkState.guestOffer(id);
+      String state = offer == null ? (WorkState.guestLooking ? "" : "missing") : offer.optString("state");
+      String label = id;
+      String text;
+      if ("too_old".equals(state)) {
+        label += " · " + t("needs a newer andr36oid release");
+        text = t("This system needs a newer andr36oid release than the one you chose. Choose another system or none, or use a newer release.");
+      } else if ("none".equals(state)) {
+        label += " · " + t("no release yet");
+        text = t("This system has no release yet. Choose another one, or none.");
+      } else if ("flasher".equals(state)) {
+        label += " · " + t("needs a newer flasher");
+        text = t("This system's newest release needs a newer version of this flasher. Update the flasher, or choose another system or none.");
+      } else if ("missing".equals(state)) {
+        label += " · " + t("not available right now");
+        text = t("This system can't be downloaded right now. Choose another one, or none.");
+      } else if (offer == null) {
+        text = t("Looking for the newest version…");
+      } else {
+        label += " · " + offer.optString("darkosen") + " · " + humanBytes(offer.optLong("download_bytes"));
+        boolean fits = WorkState.guestFitsCard(offer);
+        if (chosen) WorkState.guestFits = fits;
+        text =
+            fits
+                ? t(
+                    "Download %s. It gets %s of its own at the end of the card and is ready on the"
+                        + " console's first start.",
+                    humanBytes(offer.optLong("download_bytes")),
+                    humanBytes(offer.optLong("partition_bytes")))
+                : t("This card is too small for Android and %s together.", id);
+      }
+      button.setText(label);
+      if (chosen) info = text;
     }
-    if (!fits) WorkState.guest = false;
-    guest.setText(t("Put dArkOSen %s on the card", offer.optString("darkosen")));
-    guest.setChecked(WorkState.guest);
-    guest.setEnabled(!busy && fits);
-    guestInfo.setText(
-        fits
-            ? t(
-                "Download %s. It gets %s of its own at the end of the card and is ready on the"
-                    + " console's first start.",
-                humanBytes(offer.optLong("download_bytes")),
-                humanBytes(offer.optLong("partition_bytes")))
-            : t("This card is too small for Android and dArkOSen together."));
+    guestUpdating = false;
+    guestInfo.setText(info);
+  }
+
+  /** What an update says of the game system on the card, "" when it has none. */
+  private String guestKept() {
+    JSONObject card = WorkState.card;
+    JSONObject g = card == null ? null : card.optJSONObject("guest");
+    if (g == null) return "";
+    String name = g.optString("distribution"), version = g.optString("version");
+    if (name.isEmpty()) return t("This card has a game system on it. The update keeps it as it is.");
+    if (version.isEmpty()) return t("This card has %s on it. The update keeps it as it is.", name);
+    return t("This card has %s (%s) on it. The update keeps it as it is.", name, version);
+  }
+
+  /** An error from the engine with its message for the user, translated, first. */
+  private String explained(String error) {
+    String message = Mobile.explain(I18n.code(this), error);
+    return message.isEmpty() ? error : message + "\n\n" + t("Technical details") + ": " + error;
+  }
+
+  /** Frees the app's storage: downloads and unpacked files, never recovery backups. */
+  private void freeSpace() {
+    if (WorkState.busy) return;
+    JSONObject usage;
+    try {
+      usage = new JSONObject(WorkState.engine.cacheUsage());
+    } catch (Exception e) {
+      showError(e.toString());
+      return;
+    }
+    long free = usage.optLong("free");
+    long backups = usage.optLong("backups");
+    long count = usage.optLong("backup_count");
+    String message =
+        t(
+            "This deletes the downloaded releases and the unpacked images and game systems (%s)."
+                + " You choose the release again afterwards.",
+            humanBytes(free));
+    if (count > 0)
+      message +=
+          "\n\n"
+              + t(
+                  "Your %d recovery backup(s) (%s) are kept.",
+                  (int) count,
+                  humanBytes(backups));
+    new AlertDialog.Builder(this)
+        .setTitle(t("Free up space"))
+        .setMessage(message)
+        .setNegativeButton(t("Cancel"), null)
+        .setPositiveButton(
+            t("Delete"),
+            (d, w) -> {
+              if (WorkState.busy) return;
+              try {
+                WorkState.engine.clearCache();
+                File[] imports = getFilesDir().listFiles((dir, name) -> name.startsWith("import-"));
+                if (imports != null) for (File f : imports) f.delete();
+              } catch (Exception e) {
+                showError(e.toString());
+              }
+              WorkState.clearImage();
+              WorkState.clearSystem();
+            })
+        .show();
   }
 
   private String systemText() {
@@ -1803,6 +1959,19 @@ public final class MainActivity extends Activity {
 
   private void confirmStop() {
     if (!WorkState.busy || !WorkState.cancelable) return;
+    if (WorkState.downloading) {
+      new AlertDialog.Builder(this)
+          .setTitle(t("Stop the download?"))
+          .setMessage(t("The game system was not downloaded. Nothing was written to the card."))
+          .setNegativeButton(t("Cancel"), null)
+          .setPositiveButton(
+              t("Stop"),
+              (d, w) -> {
+                if (WorkState.busy && WorkState.downloading) WorkState.engine.cancel();
+              })
+          .show();
+      return;
+    }
     new AlertDialog.Builder(this)
         .setTitle(t("Stop writing?"))
         .setMessage(
