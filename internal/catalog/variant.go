@@ -7,8 +7,9 @@ import (
 
 // Since the hybrid releases each build comes as four images: kernel 4.19 or 5.10,
 // each with the OpenGL ES or the Vulkan graphics driver. The file name says which:
-// andr36oid-20261120-1200-rk3326-k510-vulkan.img.xz. Older images have no such part.
-var variantName = regexp.MustCompile(`-k(419|510)-(gles|vulkan)\.img(\.[a-z0-9]+)?$`)
+// andr36oid-20261120-1200-rk3326-k510-vulkan.img.xz, or with the kernel written out as in
+// andr36oid-20261116-2249-5.10-vulkan.img.xz. Older images have no such part.
+var variantName = regexp.MustCompile(`-k?(4\.?19|5\.?10)-(gles|vulkan)\.img(\.[a-z0-9]+)?$`)
 
 // Variant is the kernel line ("4.19", "5.10") and graphics driver ("gles", "vulkan") of
 // an image file; ok is false for images from before the hybrid releases.
@@ -17,7 +18,8 @@ func Variant(name string) (kernel, gpu string, ok bool) {
 	if m == nil {
 		return "", "", false
 	}
-	return m[1][:1] + "." + m[1][1:], m[2], true
+	k := strings.ReplaceAll(m[1], ".", "")
+	return k[:1] + "." + k[1:], m[2], true
 }
 
 // Recommended: the image to try first. The others are there to fall back on.

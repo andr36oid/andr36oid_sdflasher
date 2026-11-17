@@ -6,6 +6,8 @@ func TestVariants(t *testing.T) {
 	for name, want := range map[string][3]string{
 		"andr36oid-20261120-1200-rk3326-k510-vulkan.img.xz": {"5.10", "vulkan", "yes"},
 		"andr36oid-20261120-1200-rk3326-k419-gles.img.gz":   {"4.19", "gles", ""},
+		"andr36oid-20261116-2249-5.10-vulkan.img.xz":        {"5.10", "vulkan", "yes"},
+		"andr36oid-20261116-2249-4.19-gles.img.xz":          {"4.19", "gles", ""},
 		"andr36oid-20261120-1200-rk3326-K510-GLES.img":      {"5.10", "gles", ""},
 		"andr36oid-20261016-2212-rk3326.img.xz":             {"", "", "yes"},
 		"andr36oid-20261120-1200-rk3326-k612-vulkan.img.xz": {"", "", "yes"},
