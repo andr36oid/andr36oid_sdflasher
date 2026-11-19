@@ -63,6 +63,7 @@ type bootloaderPicker struct {
 	catalog                                                        *firmware.BootCatalog
 	resetNotes                                                     []firmware.BootIssue
 	image, unsupported, loading, loaded, failed, setting, accepted bool
+	imageMainline                                                  bool
 	cardTarget                                                     bool
 	cancel                                                         context.CancelFunc
 	changed                                                        func()
@@ -73,7 +74,7 @@ type bootloaderPicker struct {
 var loaderChoices = [3]string{"image", "standard", "new"}
 
 func (s *screen) newBootloaderPicker(choice firmware.BootloaderChoice, changed func()) *bootloaderPicker {
-	p := &bootloaderPicker{s: s, choice: choice, changed: changed, builds: map[string]*firmware.BootloaderBuild{}, rules: firmware.BootRules(), lookupOptions: firmware.FetchBootOffers}
+	p := &bootloaderPicker{s: s, imageMainline: s.im != nil && s.im.Facts["bootloader_chain"] == "mainline", choice: choice, changed: changed, builds: map[string]*firmware.BootloaderBuild{}, rules: firmware.BootRules(), lookupOptions: firmware.FetchBootOffers}
 	if p.choice.Choice == "" {
 		p.choice.Choice = "image"
 	}
@@ -130,6 +131,7 @@ func (p *bootloaderPicker) setTarget(image, unsupported bool) {
 	p.choice.Force = false
 	p.image, p.unsupported = image, unsupported
 	if !p.cardTarget {
+		p.imageMainline = p.s.im != nil && p.s.im.Facts["bootloader_chain"] == "mainline"
 		p.target = firmware.ImageBootTarget(p.s.im, p.s.profile)
 	}
 	p.target.ImageAvailable = image
@@ -206,7 +208,7 @@ func (p *bootloaderPicker) refresh() {
 			if n == 0 && id != "image" && (p.builds[id] == nil || p.failed) {
 				reason = p.s.t("Looking for bootloader builds...")
 			}
-			if n == 2 && id == "mainline" && (p.builds["new"] == nil || p.failed) {
+			if n == 2 && id == "mainline" && !p.hasImagePair(c) && (p.builds["new"] == nil || p.failed) {
 				reason = p.s.t("Looking for bootloader builds...")
 			}
 			if p.unsupported {
@@ -282,6 +284,12 @@ func (p *bootloaderPicker) refresh() {
 	}
 
 }
+// A selected mainline image already supplies its exact matched loader pair.
+// Download offers remain necessary for choices that do not come from it.
+func (p *bootloaderPicker) hasImagePair(c firmware.BootloaderChoice) bool {
+	return p.image && p.imageMainline && c.ChainID() == "mainline" && c.LoaderID() == "image" && c.SleepID() == "image"
+}
+
 func (p *bootloaderPicker) selection() *firmware.BootloaderChoice {
 	if p.unsupported {
 		return nil
@@ -301,7 +309,7 @@ func (p *bootloaderPicker) selection() *firmware.BootloaderChoice {
 		c.Sleep = ""
 	}
 	if c.ChainID() == "mainline" {
-		if p.builds["new"] == nil || p.failed {
+		if !p.hasImagePair(c) && (p.builds["new"] == nil || p.failed) {
 			return nil
 		}
 	} else if c.LoaderID() != "image" && c.Build == nil {
@@ -489,6 +497,7 @@ func (s *screen) editBootloader(drive platform.Drive) {
 								return
 							}
 							image = im
+							picker.imageMainline = im.Facts["bootloader_chain"] == "mainline"
 							picker.setTarget(true, drive.Fixed || info.Card.DataCard)
 							picker.selectChoice("image")
 							apply.Enable()
