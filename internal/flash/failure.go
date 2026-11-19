@@ -122,6 +122,19 @@ var (
 		})
 )
 
+// The causes of a card too small for what was chosen (the size checks in plan.go
+// and prepared.go): they are found before the write, so the card is untouched.
+var (
+	// CauseNoRoomForGuest: Android fits, but not the game system beside it.
+	CauseNoRoomForGuest = i18n.NewCause("This card has no room for the game system next to Android. Turn the game system off under Options, or use a larger card.",
+		func(s string) bool {
+			return strings.Contains(s, "too small for the game system") || strings.Contains(s, "too small for android and the game system")
+		})
+	// CauseCardTooSmall: the card can't hold andr36oid at all.
+	CauseCardTooSmall = i18n.NewCause("This card is too small for andr36oid. It needs a card of at least 16 GB. Use a larger card.",
+		func(s string) bool { return strings.Contains(s, "card is too small") })
+)
+
 // What a failed write left the card like: the apps show it after the error's own
 // message (i18n.NewState).
 var (

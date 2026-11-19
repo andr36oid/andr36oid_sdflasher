@@ -5,6 +5,16 @@ package i18n
 // (Text falls back), and TestCatalogsComplete lets them be missing there. Remove a key
 // here once it is translated into every language.
 var awaitingTranslation = map[string]bool{
+	"This card has no room for the game system next to Android. Turn the game system off under Options, or use a larger card.":  true,
+	"This card is too small for andr36oid. It needs a card of at least 16 GB. Use a larger card.":                               true,
+	"Go back to Options and turn the game system off, or use a larger card.":                                                    true,
+	"Wait about an hour, or connect this computer to a different network, then choose Try again.":                               true,
+	"Go back to setup, open the release list again and choose the release there, then write the card.":                          true,
+	"Check the internet connection, then choose Try again. If it keeps failing, try again later or use a different network.":    true,
+	"Nothing was written to any card. Choose Refresh to look again; if it keeps failing, close the flasher and start it again.": true,
+	"Keep the card out of the console and choose Try again. If it keeps failing, write the card again with an update.":          true,
+	"The card is being written": true,
+	"Closing the flasher now would leave the card half-written, and it would not start in a console. Wait until writing is finished. To end it early, choose Stop first: the flasher then finishes the block in progress and says what the card is like.": true,
 	"Check the internet connection, then choose Try again.":                                                                                                                                  true,
 	"Choose Try again and allow administrator access when you are asked. The flasher needs it only to write the card.":                                                                       true,
 	"Download the release again (Back to setup, then Release), or choose the image file again, then write the card.":                                                                         true,

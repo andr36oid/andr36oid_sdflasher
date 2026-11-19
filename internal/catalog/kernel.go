@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -94,7 +93,8 @@ func fetchKernelIndex(ctx context.Context, client *http.Client, raw string) (*Ke
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("kernel index returned %s", resp.Status)
+		// a rate limit, a missing index or a server problem says so (statusError)
+		return nil, statusError(resp)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
 	if err != nil {

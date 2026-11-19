@@ -11,6 +11,7 @@ import (
 	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/jobs"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/platform"
 )
@@ -72,7 +73,7 @@ func (s *screen) offerKernelUpdate(drive platform.Drive, expected string, after 
 					finish()
 					return
 				}
-				status.SetText(s.t("Could not check for kernel updates.") + "\n" + s.t("Technical details") + ": " + s.t(err.Error()))
+				status.SetText(s.kernelError(s.t("Could not check for kernel updates."), err, false))
 				retry.Show()
 				return
 			}
@@ -114,7 +115,7 @@ func (s *screen) offerKernelUpdate(drive platform.Drive, expected string, after 
 						skip.Enable()
 						bar.Hide()
 						if err != nil {
-							status.SetText(s.t("Kernel update could not finish.") + "\n" + s.t("Technical details") + ": " + s.t(err.Error()))
+							status.SetText(s.kernelError(s.t("Kernel update could not finish."), err, true))
 							retry.Show()
 							return
 						}
@@ -125,4 +126,25 @@ func (s *screen) offerKernelUpdate(drive platform.Drive, expected string, after 
 			}
 		})
 	}()
+}
+
+// kernelError is the text of a failed kernel check (applying false: nothing was
+// written) or kernel update: the head, what is known about the error (an i18n
+// message or cause), what that means for the card, and the error itself. A key of
+// its own (firmware.KernelChanged and the like) is the error's text.
+func (s *screen) kernelError(head string, err error, applying bool) string {
+	text := head
+	if key, args, ok := i18n.Find(err); ok {
+		text += " " + s.t(key, args...)
+	} else if t := s.t(err.Error()); t != err.Error() {
+		text += " " + t
+	} else if !applying {
+		text += " " + s.t("Check the internet connection, then choose Try again.")
+	}
+	if !applying {
+		text += " " + s.t("Nothing was written to the card.")
+	} else if _, _, ok := i18n.FindState(err); !ok {
+		text += " " + s.t("Keep the card out of the console and choose Try again. If it keeps failing, write the card again with an update.")
+	}
+	return text + "\n" + s.t("Technical details") + ": " + err.Error()
 }

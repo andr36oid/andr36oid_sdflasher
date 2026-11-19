@@ -12,6 +12,8 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/jobs"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/platform"
 )
@@ -351,7 +353,7 @@ func (s *screen) listDrives() {
 			if e != nil {
 				s.logf("listing drives failed: %v", e)
 				s.refreshCards()
-				s.cardLabel.SetText(s.t("Could not list cards") + ": " + e.Error())
+				s.cardLabel.SetText(s.listError(e))
 				s.cardLabel.Show()
 				return
 			}
@@ -362,6 +364,18 @@ func (s *screen) listDrives() {
 			s.setDrives(ds)
 		})
 	})
+}
+
+// listError is the card step's text when the computer's disks could not be
+// listed: what is known about the error (an i18n message or cause), or the way on.
+func (s *screen) listError(e error) string {
+	text := s.t("Could not list cards") + ". "
+	if key, args, ok := i18n.Find(e); ok {
+		text += s.t(key, args...)
+	} else {
+		text += s.t("Nothing was written to any card. Choose Refresh to look again; if it keeps failing, close the flasher and start it again.")
+	}
+	return text + "\n" + s.t("Technical details") + ": " + e.Error()
 }
 
 // listDrives lists the cards, or every drive with all; background runs slow work
@@ -415,7 +429,8 @@ func (s *screen) inspectDrive(d platform.Drive) {
 				s.logf("inspection failed: %v", e)
 				s.drive = nil
 				s.setBusy(false)
-				s.showError(e)
+				// inspecting only reads the card
+				s.showError(fmt.Errorf("%w; %w", e, flash.StateUntouched.New()))
 				return
 			}
 			s.card = result.Card

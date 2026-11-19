@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 )
 
 const kernelTestBuild = "v2026-10-22-release|eng.kenny.20261022.1200"
@@ -164,6 +165,29 @@ func TestDownloadKernelVerifiedAndRestricted(t *testing.T) {
 		entries, _ := os.ReadDir(dir)
 		if len(entries) != 0 {
 			t.Fatal("failed download left a file")
+		}
+	}
+}
+
+// The kernel index's HTTP errors say what they are (statusError), not a bare status.
+func TestFetchKernelIndexStatusSaysWhat(t *testing.T) {
+	for _, tc := range []struct {
+		status    int
+		remaining string
+		want      *i18n.Format
+	}{
+		{http.StatusForbidden, "0", ErrRateLimited}, {http.StatusTooManyRequests, "", ErrRateLimited},
+		{http.StatusNotFound, "", ErrNotThere}, {http.StatusBadGateway, "", ErrServer}, {http.StatusForbidden, "", ErrRefused},
+	} {
+		client := appUpdateClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if tc.remaining != "" {
+				w.Header().Set("X-RateLimit-Remaining", tc.remaining)
+			}
+			w.WriteHeader(tc.status)
+		}))
+		_, err := fetchKernelIndex(context.Background(), client, "https://index.test")
+		if err == nil || !tc.want.Is(err) {
+			t.Errorf("%d: %v", tc.status, err)
 		}
 	}
 }

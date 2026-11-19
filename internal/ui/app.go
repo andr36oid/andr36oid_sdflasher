@@ -31,6 +31,8 @@ type screen struct {
 	locale  string
 	started bool
 	busy    bool
+	// writing: the card write itself runs (it can be stopped, not cut off)
+	writing bool
 	cancel  context.CancelFunc
 	// closeAfter: the window closes when the stopped download has ended
 	closeAfter bool
@@ -194,6 +196,10 @@ func Run() {
 					s.cancel()
 				}
 			}, w)
+			return
+		}
+		if s.busy && s.writing {
+			s.info(s.t("The card is being written"), s.t(closeWhileWriting), w)
 			return
 		}
 		if s.busy {

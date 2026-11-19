@@ -146,13 +146,16 @@ func failureReport(err error, explained string) string {
 // explain is the user's message in err, translated (i18n.Find), or the general
 // advice for an error that has none.
 func (s *screen) explain(err error) string {
-	if key, args, ok := i18n.Find(err); ok {
-		out := s.t(key, args...)
-		// what the error left the card like (i18n.NewState)
-		if skey, sargs, ok := i18n.FindState(err); ok && skey != key {
-			out += "\n\n" + s.t(skey, sargs...)
-		}
-		return out
+	key, args, found := i18n.Find(err)
+	skey, sargs, hasState := i18n.FindState(err)
+	out := s.t("Check the selected image and card, then try again.")
+	if found && !(hasState && key == skey) {
+		out = s.t(key, args...)
 	}
-	return s.t("Check the selected image and card, then try again.")
+	// what the error left the card like (i18n.NewState); an error that says only
+	// that still gets the general advice before it
+	if hasState {
+		out += "\n\n" + s.t(skey, sargs...)
+	}
+	return out
 }

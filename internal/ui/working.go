@@ -447,6 +447,7 @@ func (s *screen) write(w *work, guest *flash.Guest, boot *firmware.BootloaderCho
 	req.ImageSource = s.im.Source
 	req.Guest = p.Guest
 	var speed *flash.CardSpeed
+	s.writing = true
 	go func() {
 		result, e := jobs.RunStoppable(req, func(pr flash.Progress) {
 			fyne.Do(func() {
@@ -459,6 +460,7 @@ func (s *screen) write(w *work, guest *flash.Guest, boot *firmware.BootloaderCho
 		}, stop)
 		fyne.Do(func() {
 			s.busy = false
+			s.writing = false
 			w.stop.Hide()
 			if errors.Is(e, jobs.ErrStopped) {
 				s.logf("write stopped by the user: card %s", result.Stopped)
@@ -485,6 +487,10 @@ func (s *screen) write(w *work, guest *flash.Guest, boot *firmware.BootloaderCho
 		})
 	}()
 }
+
+// closeWhileWriting is what closing the window during the write says: the window
+// stays, since closing it would leave the card half-written.
+const closeWhileWriting = "Closing the flasher now would leave the card half-written, and it would not start in a console. Wait until writing is finished. To end it early, choose Stop first: the flasher then finishes the block in progress and says what the card is like."
 
 // askStop asks once whether to stop the write, then asks the helper.
 func (w *work) askStop(stop *jobs.Stop) {
@@ -639,8 +645,16 @@ func (s *screen) whatToDo(e error) string {
 		return s.t("This card holds less than it reports, so it can't hold andr36oid. Use another card, best a known brand from a shop you trust. Tools such as H2testw or f3 can check a card.")
 	case is(flash.ErrWriteProtected, i18n.CauseWriteProtected):
 		return s.t("Slide the lock switch on the card or its adapter away from LOCK, put the card in again, then choose Try again. If the switch is already open, the card has worn out; use another card.")
-	case strings.Contains(text, "too small"):
+	case is(flash.CauseNoRoomForGuest):
+		return s.t("Go back to Options and turn the game system off, or use a larger card.")
+	case is(flash.CauseCardTooSmall) || strings.Contains(text, "too small"):
 		return s.t("Use a larger card.")
+	case is(catalog.ErrRateLimited):
+		return s.t("Wait about an hour, or connect this computer to a different network, then choose Try again.")
+	case is(catalog.ErrNotThere):
+		return s.t("Go back to setup, open the release list again and choose the release there, then write the card.")
+	case is(catalog.ErrStalled, catalog.ErrCutOff, catalog.ErrServer, catalog.ErrRefused, catalog.ErrReleaseList):
+		return s.t("Check the internet connection, then choose Try again. If it keeps failing, try again later or use a different network.")
 	case is(i18n.CauseDamaged, flash.CauseImageChanged, flash.CauseGuestDamaged, catalog.ErrDamagedDownload):
 		return s.t("Download the release again (Back to setup, then Release), or choose the image file again, then write the card.")
 	case is(i18n.CauseLocked):

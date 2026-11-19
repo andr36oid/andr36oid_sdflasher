@@ -9,6 +9,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 )
 
 // The game system box on the options page: one choice of dArkOS (preselected),
@@ -297,6 +298,12 @@ func (s *screen) refreshGuest() {
 			text = s.t("Looking for the newest version...")
 		case guestMissing:
 			text = s.t("This system can't be downloaded right now. Choose another one, or none.")
+			// why, when it is known: offline, a rate limit, a damaged release list
+			if l := s.guests[s.guestChoice]; l != nil && l.err != nil {
+				if key, args, ok := i18n.Find(l.err); ok {
+					text += " " + s.t(key, args...)
+				}
+			}
 		case guestNone:
 			text = s.t("This system has no release yet. Choose another one, or none.")
 		case guestFlasher:
