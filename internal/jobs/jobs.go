@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -69,6 +71,12 @@ type Result struct {
 
 	// ErrorKind is flash.Classify of the error, so that the app can add hints.
 	ErrorKind flash.FailureKind `json:"error_kind,omitempty"`
+
+	// Stopping: the helper took the app's stop request (stop.go).
+	Stopping bool `json:"stopping,omitempty"`
+	// Stopped: the write was stopped by the user; what the card is like
+	// (StoppedUntouched, StoppedIncomplete, StoppedRestored).
+	Stopped string `json:"stopped,omitempty"`
 }
 
 func CacheDir() (string, error) {
@@ -99,7 +107,15 @@ func Worker(job string) error {
 	}
 	dir := filepath.Dir(job)
 	status := filepath.Join(dir, "status.json")
+	// a write can be stopped by the app (stop.go)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var stopping atomic.Bool
+	var emitting sync.Mutex
 	emit := func(r Result) {
+		emitting.Lock()
+		defer emitting.Unlock()
+		r.Stopping = r.Stopping || stopping.Load()
 		b, _ := json.Marshal(r)
 		tmp := status + ".tmp"
 		if os.WriteFile(tmp, b, 0644) == nil {
@@ -348,8 +364,12 @@ func Worker(job string) error {
 		if req.CustomDTB != "" && !req.CustomAccepted {
 			return errors.New("custom DTB warning has not been accepted")
 		}
+		go watchStop(ctx, dir, cancel, func() {
+			stopping.Store(true)
+			emit(Result{Stopping: true})
+		})
 		emit(Result{Progress: &flash.Progress{Phase: "preflight", Name: "Validating release"}})
-		im, e := firmware.InspectForWrite(context.Background(), req.Image, req.ImageHash)
+		im, e := firmware.InspectForWrite(ctx, req.Image, req.ImageHash)
 		if e != nil {
 			return e
 		}
@@ -364,6 +384,9 @@ func Worker(job string) error {
 				return e
 			}
 		}
+		if e = ctx.Err(); e != nil {
+			return e
+		}
 		h, e := platform.Open(d, true)
 		if e != nil {
 			if _, busy := platform.Busy(e.Error()); busy {
@@ -377,7 +400,8 @@ func Worker(job string) error {
 		}
 		// a new card stays mounted for adding APKs to AUTOAPK; the app ejects it
 		h.Remount = req.Mode == "install"
-		defer h.Close()
+		closeCard := sync.OnceFunc(h.Close)
+		defer closeCard()
 		// errors of the card itself, also outside the write, get the failure hints
 		dev := flash.DeviceErrors(h.File)
 		card, e := flash.InspectCard(dev, d.Size)
@@ -441,7 +465,13 @@ func Worker(job string) error {
 		if req.Mode == "update" {
 			result.Backup = backup
 		}
-		if e = flash.Execute(context.Background(), dev, im, p, boot, backup, func(p flash.Progress) { emit(Result{Progress: &p, Backup: result.Backup}) }); e != nil {
+		if e = flash.Execute(ctx, dev, im, p, boot, backup, func(p flash.Progress) { emit(Result{Progress: &p, Backup: result.Backup}) }); e != nil {
+			if stopping.Load() {
+				if state, ok := stopOutcome(e, dev, closeCard); ok {
+					result.Stopped = state
+					return nil
+				}
+			}
 			return e
 		}
 		if e = firmware.RecordImageSource(dev, d.Size, im.BuildIdentity, req.ImageSource, dir); e != nil {
@@ -461,9 +491,17 @@ func Worker(job string) error {
 		}
 		return nil
 	}
-	if e := work(); e != nil {
+	e = work()
+	if e != nil && stopping.Load() && result.Stopped == "" {
+		// stopped before the card was opened
+		if state, ok := stopOutcome(e, nil, nil); ok {
+			result.Stopped, e = state, nil
+		}
+	}
+	if e != nil {
 		result.Error, result.ErrorKind = e.Error(), flash.Classify(e)
 	}
+	result.Stopping = stopping.Load()
 	return nil
 }
 func helperName() string {
@@ -530,6 +568,12 @@ var runHelper = platform.RunHelper
 var helperPath = helper
 
 func Run(req Request, onProgress func(flash.Progress)) (Result, error) {
+	return RunStoppable(req, onProgress, nil)
+}
+
+// RunStoppable is Run for a write that the user may stop (stop.go); stop may be
+// nil. A stopped write ends with ErrStopped and Result.Stopped.
+func RunStoppable(req Request, onProgress func(flash.Progress), stop *Stop) (Result, error) {
 	if writes[req.Action] {
 		// a computer that goes to sleep halfway leaves the card incomplete
 		release := inhibitSleep("Writing an SD card")
@@ -569,12 +613,31 @@ func Run(req Request, onProgress func(flash.Progress)) (Result, error) {
 	var latest Result
 	// began: the helper had begun to change the card
 	began := false
+	// the stop request: asked, and whether the helper's answer was passed on
+	var stopAsked <-chan struct{}
+	var stopWait <-chan time.Time
+	answered := false
+	answer := func(ok bool) {
+		if !answered {
+			answered = true
+			stopWait = nil
+			if stop.Answer != nil {
+				stop.Answer(ok)
+			}
+		}
+	}
+	if stop != nil {
+		stopAsked = stop.ch
+	}
 	poll := func() {
 		b, e := os.ReadFile(filepath.Join(dir, "status.json"))
 		if e == nil {
 			var r Result
 			if json.Unmarshal(b, &r) == nil {
 				latest = r
+				if r.Stopping && stop != nil && stopAsked == nil {
+					answer(true)
+				}
 				if r.Progress != nil {
 					began = began || req.Action == "write" && r.Progress.Writing()
 					if onProgress != nil {
@@ -596,8 +659,24 @@ func Run(req Request, onProgress func(flash.Progress)) (Result, error) {
 		select {
 		case <-timer.C:
 			poll()
+		case <-stopAsked:
+			stopAsked = nil
+			if e := os.WriteFile(filepath.Join(dir, stopFile), nil, 0644); e != nil {
+				answer(false)
+			} else {
+				stopWait = time.After(StopWait)
+			}
+		case <-stopWait:
+			// a helper that doesn't know the request goes on writing
+			answer(false)
 		case e := <-ch:
 			poll()
+			if latest.Stopped != "" {
+				if stop != nil {
+					answer(true)
+				}
+				return latest, ErrStopped
+			}
 			if latest.Done && latest.Error != "" {
 				// the helper said what went wrong before it ended
 				return latest, flash.NewFailure(latest.ErrorKind, errors.New(latest.Error))

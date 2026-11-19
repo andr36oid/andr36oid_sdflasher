@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -96,7 +97,7 @@ type work struct {
 	strip           *cardStrip
 	blocks          *blockMap
 	hover           *widget.Label
-	empty           *widget.Label
+	emptyNote       string
 	buttons         *fyne.Container
 	stop            *widget.Button
 	started         time.Time
@@ -171,9 +172,14 @@ func (s *screen) newWork(guest string) *work {
 	w.result = container.NewVBox()
 	w.strip = newCardStrip()
 	w.blocks = newBlockMap()
-	w.hover = wrapped(" ")
-	w.hover.Importance = widget.LowImportance
+	// beside "What is written": the block under the mouse, otherwise what is only
+	// set up empty
+	w.hover = widget.NewLabel(" ")
+	w.hover.Truncation = fyne.TextTruncateClip
 	w.blocks.hover = func(text string) {
+		if text == "" {
+			text = w.emptyNote
+		}
 		if text == "" {
 			text = " "
 		}
@@ -182,10 +188,8 @@ func (s *screen) newWork(guest string) *work {
 	w.blocks.describe = func(g *blockGroup, b mapBlock) string {
 		return g.name + " - " + s.t("%s to %s", gb(b.off), gb(b.off+b.length)) + " - " + s.t(blockNames[b.state])
 	}
-	w.empty = wrapped("")
-	w.empty.Hide()
-	// Stop is there while the game system downloads; the write itself is done by
-	// the disk helper with administrator rights and has no way to be stopped
+	// Stop: while the game system downloads it cancels the download; the write
+	// sets its own (askStop)
 	w.stop = widget.NewButton(s.t("Stop"), func() {
 		s.confirmDialog(s.t("Stop the download?"), s.t("Nothing was written to the card."), func(ok bool) {
 			if ok && s.cancel != nil {
@@ -196,11 +200,11 @@ func (s *screen) newWork(guest string) *work {
 	w.stop.Hide()
 	w.buttons = container.NewHBox(layout.NewSpacer(), w.stop)
 	cardSize := s.drive.Size
-	what := container.NewBorder(nil, nil, heading(s.t("What is written")), nil, container.NewCenter(w.hover))
+	what := container.NewBorder(nil, nil, widget.NewLabelWithStyle(s.t("What is written"), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, w.hover)
 	// the blocks take the height that is left, so the legend below never needs scrolling
 	body := container.New(fillLast{}, row, w.result, w.phase, w.sub, w.bar, w.numbers, widget.NewSeparator(),
 		heading(s.t("The whole card (%s)", fmt.Sprintf("%.0f GB", float64(cardSize)/1e9))), w.strip,
-		what, w.empty, w.blocks)
+		what, w.blocks)
 	w.lead = wrapped(s.t("Do not take the card out.") + " " + s.driveTitle(*s.drive))
 	top := container.NewVBox(w.head, w.lead)
 	bottom := container.NewVBox(container.NewPadded(legendRow(s.t)), widget.NewSeparator(), w.buttons)
@@ -285,11 +289,11 @@ func (w *work) setPlan(p *flash.Plan) {
 	w.strip.setParts(p.Size, strip)
 	w.blocks.setGroups(groups, w.s.t("your data, not touched"))
 	if len(empty) > 0 {
-		w.empty.SetText(w.s.t("%s: set up empty, nothing to copy", strings.Join(empty, ", ")))
-		w.empty.Show()
+		w.emptyNote = w.s.t("%s: set up empty, nothing to copy", strings.Join(empty, ", "))
 	} else {
-		w.empty.Hide()
+		w.emptyNote = ""
 	}
+	w.blocks.hover("")
 }
 
 // progress follows one event of the write job.
@@ -426,9 +430,13 @@ func (s *screen) write(w *work, guest *flash.Guest, boot *firmware.BootloaderCho
 		w.failed(e, "", false)
 		return
 	}
-	// a write is not stopped halfway
 	s.cancel = nil
-	w.stop.Hide()
+	// the write can be stopped: the helper ends it after the block in progress
+	stop := jobs.NewStop(func(ok bool) { fyne.Do(func() { w.stopAnswered(ok) }) })
+	w.stop.SetText(s.t("Stop"))
+	w.stop.OnTapped = func() { w.askStop(stop) }
+	w.stop.Enable()
+	w.stop.Show()
 	w.stage = -1
 	w.enter(stageCheck)
 	w.setPlan(p)
@@ -440,7 +448,7 @@ func (s *screen) write(w *work, guest *flash.Guest, boot *firmware.BootloaderCho
 	req.Guest = p.Guest
 	var speed *flash.CardSpeed
 	go func() {
-		result, e := jobs.Run(req, func(pr flash.Progress) {
+		result, e := jobs.RunStoppable(req, func(pr flash.Progress) {
 			fyne.Do(func() {
 				if pr.Speed != nil {
 					speed = pr.Speed
@@ -448,9 +456,15 @@ func (s *screen) write(w *work, guest *flash.Guest, boot *firmware.BootloaderCho
 				}
 				w.progress(pr)
 			})
-		})
+		}, stop)
 		fyne.Do(func() {
 			s.busy = false
+			w.stop.Hide()
+			if errors.Is(e, jobs.ErrStopped) {
+				s.logf("write stopped by the user: card %s", result.Stopped)
+				w.stopped(result.Stopped)
+				return
+			}
 			if detail, busy := busyError(e); busy {
 				// nothing was written yet: the user closes what uses the card, then again
 				s.logf("card in use: %s", detail)
@@ -470,6 +484,70 @@ func (s *screen) write(w *work, guest *flash.Guest, boot *firmware.BootloaderCho
 			w.finished(func() { s.showDone(p, result, speed) })
 		})
 	}()
+}
+
+// askStop asks once whether to stop the write, then asks the helper.
+func (w *work) askStop(stop *jobs.Stop) {
+	s := w.s
+	text := s.t("The card will not be usable until it is written again.")
+	if w.updating {
+		text = s.t("The update is undone: the card is put back as it was before it.")
+	}
+	s.confirmDialog(s.t("Stop writing?"), text, func(ok bool) {
+		if !ok || w.done {
+			return
+		}
+		s.logf("stop requested")
+		stop.Request()
+		w.stop.SetText(s.t("Stopping..."))
+		w.stop.Disable()
+		w.sub.SetText(s.t("Stopping after the block in progress..."))
+		w.sub.Show()
+	}, s.win)
+}
+
+// stopAnswered: whether the helper took the stop request. One that doesn't know
+// it (an older helper) goes on writing; it can't be ended from here, since it runs
+// with administrator rights the window doesn't have.
+func (w *work) stopAnswered(ok bool) {
+	s := w.s
+	if ok || w.done {
+		return
+	}
+	s.logf("the disk helper did not take the stop request")
+	w.stop.Hide()
+	w.sub.Hide()
+	s.info(s.t("Writing can't be stopped"), s.t("This disk helper is older and can't stop a write, so writing goes on. If you must stop it now, take the card out. It is then incomplete and has to be written again before you use it."), s.win)
+}
+
+// stopped is the calm page of a write the user stopped; the block view stays with
+// what was written.
+func (w *work) stopped(state string) {
+	s := w.s
+	w.done = true
+	text := s.t("Writing was stopped. The card is incomplete and has to be written again before you use it.")
+	switch state {
+	case jobs.StoppedUntouched:
+		text = s.t("Writing was stopped before anything was written to the card. The card is as it was.")
+	case jobs.StoppedRestored:
+		text = s.t("The update was stopped. The card was put back as it was before the update and checked.")
+	}
+	w.head.SetText(s.t("Writing was stopped"))
+	w.lead.SetText(s.driveTitle(*s.drive))
+	w.phase.Hide()
+	w.sub.Hide()
+	w.bar.Hide()
+	w.numbers.Hide()
+	w.strip.setPos(-1)
+	w.blocks.update(true)
+	w.result.Objects = []fyne.CanvasObject{noteCard(notePlain, wrapped(text+" "+s.t("Nothing on this computer was changed.")))}
+	w.result.Refresh()
+	again := widget.NewButton(s.t("Write again"), func() { s.backToSetup(stepWrite) })
+	again.Importance = widget.HighImportance
+	back := widget.NewButton(s.t("Back to setup"), func() { s.backToSetup(stepCard) })
+	w.buttons.Objects = []fyne.CanvasObject{layout.NewSpacer(), back, again}
+	w.buttons.Refresh()
+	s.setBusy(false)
 }
 
 // finished shows the whole card checked and moves on after a moment or a click.
@@ -533,14 +611,55 @@ func (w *work) failed(e error, backup string, wrote bool) {
 	} else {
 		happened += s.t("The card could not be written")
 	}
-	todo := s.failureHints(e)
-	if todo == "" {
-		todo = s.t("Check the selected image and card, then try again.")
-	}
+	todo := s.whatToDo(e)
 	if backup != "" {
 		todo += "\n\n" + s.t("Recovery backups") + ": " + backup
 	}
 	w.failedText(s.t("The card could not be written"), happened, state, todo, e, nil)
+}
+
+// whatToDo is the way on after a failed write, for the kinds of failure the
+// write tells apart; the general hints otherwise.
+func (s *screen) whatToDo(e error) string {
+	key, _, _ := i18n.Find(e)
+	is := func(fs ...*i18n.Format) bool {
+		for _, f := range fs {
+			if f.Is(e) || key == f.Key() {
+				return true
+			}
+		}
+		return false
+	}
+	text := strings.ToLower(e.Error())
+	if _, busy := busyError(e); busy {
+		return s.t("Close what uses the card, then choose Try again.")
+	}
+	switch {
+	case is(flash.ErrFakeCapacity, i18n.CauseCardEnded) || flash.Classify(e) == flash.FailureCapacity:
+		return s.t("This card holds less than it reports, so it can't hold andr36oid. Use another card, best a known brand from a shop you trust. Tools such as H2testw or f3 can check a card.")
+	case is(flash.ErrWriteProtected, i18n.CauseWriteProtected):
+		return s.t("Slide the lock switch on the card or its adapter away from LOCK, put the card in again, then choose Try again. If the switch is already open, the card has worn out; use another card.")
+	case strings.Contains(text, "too small"):
+		return s.t("Use a larger card.")
+	case is(i18n.CauseDamaged, flash.CauseImageChanged, flash.CauseGuestDamaged, catalog.ErrDamagedDownload):
+		return s.t("Download the release again (Back to setup, then Release), or choose the image file again, then write the card.")
+	case is(i18n.CauseLocked):
+		return s.t("Close what uses the card, then choose Try again.")
+	case is(i18n.CausePermission, i18n.CauseHelperStopped):
+		return s.t("Choose Try again and allow administrator access when you are asked. The flasher needs it only to write the card.")
+	case is(i18n.CauseDiskFull, firmware.ErrNoSpace):
+		return s.t("Free up space on this computer, or clear the cached files under Fix or change a card, then choose Try again.")
+	case is(flash.CauseVerify) || flash.Classify(e) == flash.FailureVerify:
+		return s.t("Try another card reader or USB port first. If it happens again, the card does not keep what is written to it; use another card.")
+	case is(i18n.CauseDeviceGone, platform.ErrCardChanged) || flash.Classify(e) == flash.FailureDevice:
+		return s.t("Put the card in again and check that it sits firmly, then choose Try again. If it happens again, try another card reader or USB port.")
+	case is(i18n.CauseOffline, i18n.CauseTimeout, i18n.CauseTLS):
+		return s.t("Check the internet connection, then choose Try again.")
+	}
+	if h := s.failureHints(e); h != "" {
+		return h
+	}
+	return s.t("Check the selected image and card, then try again.")
 }
 
 // stateKey is the key of the state an error carries, or "".

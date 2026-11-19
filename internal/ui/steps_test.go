@@ -480,6 +480,13 @@ func TestEveryPageRenders(t *testing.T) {
 			capture(t, s, dir, name("8-failed"))
 			captureBottom(t, s, dir, name("8-failed"))
 
+			w = s.newWork("")
+			feed(w, plan, 0.3, false)
+			w.stop.Show()
+			capture(t, s, dir, name("6-working-stoppable"))
+			w.stopped(jobs.StoppedIncomplete)
+			capture(t, s, dir, name("8-stopped"))
+
 			s.setTask(taskUpdate)
 			s.card = &flash.Card{Installed: true, Treble: true, Profile: "Panels/Panel4"}
 			update := testPlan(true)
