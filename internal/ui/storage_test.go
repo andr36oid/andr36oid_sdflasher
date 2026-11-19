@@ -39,9 +39,8 @@ func TestStorageSlider(t *testing.T) {
 		t.Fatal("slider shown with all storage for Android")
 	}
 	s.noROMs.SetChecked(false)
-	s.updating = true
-	s.ready()
-	if s.sizeSlider.Visible() || s.storageText() != "" {
+	s.setTask(taskUpdate)
+	if s.sizeSlider.Visible() || s.storageText() != "" || s.storageBox.Visible() || !s.storageKept.Visible() {
 		t.Fatal("slider shown for an update")
 	}
 }
@@ -53,13 +52,11 @@ func TestSystemImageSummary(t *testing.T) {
 	defer w.Close()
 	s := &screen{win: w, locale: "en", im: &firmware.Image{Profiles: []firmware.Profile{{ID: "Panels/Panel4", Name: "R36S — Panel 4", Console: "R36S"}}}}
 	s.build()
-	s.summarize()
-	if strings.Contains(s.sumValues[4].Text, "System image") {
+	if strings.Contains(s.alsoText(), "System image") {
 		t.Fatal("system image shown without one")
 	}
 	s.system, s.systemAccepted = "/tmp/lineage-gsi.img", true
-	s.summarize()
-	if !strings.HasSuffix(s.sumValues[4].Text, "System image: lineage-gsi.img") {
-		t.Fatalf("summary %q", s.sumValues[4].Text)
+	if !strings.HasSuffix(s.alsoText(), "System image: lineage-gsi.img") {
+		t.Fatalf("summary %q", s.alsoText())
 	}
 }

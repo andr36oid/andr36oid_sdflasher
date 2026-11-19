@@ -295,7 +295,7 @@ final class WorkState {
     if (busy) return;
     busy = true;
     error = "";
-    message = "Working…";
+    message = "Working...";
     note = "";
     result = "";
     progress = null;

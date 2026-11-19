@@ -3,14 +3,12 @@ package ui
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
-	"github.com/andr36oid/andr36oid-sdflasher/internal/jobs"
 )
 
 // The game system box on the options page: one choice of dArkOS (preselected),
@@ -49,11 +47,34 @@ func (s *screen) buildGuest() {
 		s.ready()
 	})
 	s.guestRadio.Required = true
-	s.guestChoice = catalog.DefaultGuest
+	s.guestRadio.Hide()
+	if s.guestChoice == "" {
+		s.guestChoice = catalog.DefaultGuest
+	}
+	s.guestCheck, _, s.guestCheckRow = wrappedCheck("", func(on bool) {
+		if s.guestUpdating {
+			return
+		}
+		if on {
+			s.guestChoice = s.guestLast
+			if s.guestChoice == "" || s.guestChoice == catalog.NoGuest {
+				s.guestChoice = catalog.DefaultGuest
+			}
+		} else {
+			s.guestLast, s.guestChoice = s.guestChoice, catalog.NoGuest
+		}
+		s.guestChosen = true
+		s.ready()
+	})
 	s.guestInfo = wrapped("")
-	s.guestIntro = wrapped(s.t("Choose one system to put on the card now. You can add more later on the console."))
-	s.guestBox = container.NewVBox(widget.NewSeparator(), heading(s.t("Game system")),
-		s.guestIntro, s.guestRadio, s.guestInfo)
+	s.guestChange = quiet(s.t("Change..."), func() {
+		if s.guestRadio.Visible() {
+			s.guestRadio.Hide()
+		} else {
+			s.guestRadio.Show()
+		}
+	})
+	s.guestBox = noteCard(notePlain, s.guestCheckRow, s.guestInfo, container.NewHBox(s.guestChange), s.guestRadio)
 	s.guestBox.Hide()
 }
 
@@ -208,14 +229,15 @@ func (s *screen) refreshGuest() {
 	}
 	// an update keeps the system that is on the card; the choice is for new cards
 	if s.updating && s.guestKept() != "" {
+		s.guestCheckRow.Hide()
+		s.guestChange.Hide()
 		s.guestRadio.Hide()
-		s.guestIntro.Hide()
 		s.guestInfo.SetText(s.guestKept())
 		s.guestBox.Show()
 		return
 	}
-	s.guestRadio.Show()
-	s.guestIntro.Show()
+	s.guestCheckRow.Show()
+	s.guestChange.Show()
 	if !s.guestShown() {
 		s.guestBox.Hide()
 		return
@@ -232,15 +254,15 @@ func (s *screen) refreshGuest() {
 		label := src.Display
 		switch {
 		case st == guestTooOld:
-			label += " · " + s.t("needs a newer andr36oid release")
+			label += " - " + s.t("needs a newer andr36oid release")
 		case st == guestNone:
-			label += " · " + s.t("no release yet")
+			label += " - " + s.t("no release yet")
 		case st == guestFlasher:
-			label += " · " + s.t("needs a newer flasher")
+			label += " - " + s.t("needs a newer flasher")
 		case st == guestMissing:
-			label += " · " + s.t("not available right now")
+			label += " - " + s.t("not available right now")
 		case g != nil:
-			label += " · " + g.Darkosen + " · " + humanBytes(g.DownloadBytes())
+			label += " - " + g.Darkosen + " - " + humanBytes(g.DownloadBytes())
 		}
 		labels = append(labels, label)
 	}
@@ -253,13 +275,26 @@ func (s *screen) refreshGuest() {
 		}
 	}
 	s.guestRadio.Refresh()
+	name := s.guestChoice
+	if name == catalog.NoGuest {
+		name = s.guestLast
+	}
+	if name == "" || name == catalog.NoGuest {
+		name = catalog.DefaultGuest
+	}
+	src, _ := catalog.FindGuestSource(name)
+	if row, ok := s.guestCheckRow.(*fyne.Container); ok {
+		if label, ok := row.Objects[0].(*tapLabel); ok {
+			label.SetText(s.t("Add a game system: %s", src.Display))
+		}
+	}
+	s.guestCheck.SetChecked(s.guestChoice != catalog.NoGuest)
 	s.guestUpdating = false
 	text := s.t("No system is put on the card. You can add one later on the console.")
 	if s.guestChoice != catalog.NoGuest {
-		src, _ := catalog.FindGuestSource(s.guestChoice)
 		switch st, g := s.guestState(s.guestChoice); st {
 		case guestLooking:
-			text = s.t("Looking for the newest version…")
+			text = s.t("Looking for the newest version...")
 		case guestMissing:
 			text = s.t("This system can't be downloaded right now. Choose another one, or none.")
 		case guestNone:
@@ -273,80 +308,10 @@ func (s *screen) refreshGuest() {
 		default:
 			text = s.t("Download %s. It gets %s of its own at the end of the card and is ready on the console's first start.", humanBytes(g.DownloadBytes()), humanBytes(g.PartitionBytes))
 		}
+		text += " " + s.t("You can add more later on the console.")
 	}
 	s.guestInfo.SetText(text)
 	s.guestBox.Show()
-}
-
-// withGuest downloads the chosen system, if any, and hands it to then.
-func (s *screen) withGuest(then func(*flash.Guest)) {
-	g := s.guestOffer()
-	if g == nil {
-		then(nil)
-		return
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	s.cancel = cancel
-	s.setBusy(true)
-	src, _ := catalog.FindGuestSource(g.Distribution)
-	s.guestStatus.SetText(s.t("Downloading %s…", src.Display))
-	s.guestBar.SetValue(0)
-	s.guestStop.Enable()
-	s.guestWork.Show()
-	go func() {
-		dir, e := jobs.CacheDir()
-		var path string
-		if e == nil {
-			path, e = catalog.DownloadGuest(ctx, g, dir, func(phase string, done, total int64) {
-				fyne.Do(func() {
-					if total > 0 {
-						// the download is the first half of the bar, unpacking the second
-						v := float64(done) / float64(total) / 2
-						if phase == "unpack" {
-							v += 0.5
-						}
-						s.guestBar.SetValue(v)
-					}
-				})
-			})
-		}
-		fyne.Do(func() {
-			stopped := ctx.Err() != nil
-			cancel()
-			s.cancel = nil
-			s.guestWork.Hide()
-			s.setBusy(false)
-			if s.closeAfter {
-				s.win.Close()
-				return
-			}
-			if stopped {
-				s.info(s.t("Download stopped"), s.t("The game system was not downloaded. Nothing was written to the card."), s.win)
-				return
-			}
-			if e != nil {
-				// the download comes before the card is touched
-				s.showError(fmt.Errorf("%w; %w", e, flash.StateUntouched.New()))
-				return
-			}
-			then(flashGuest(g, path))
-		})
-	}()
-}
-
-// buildGuestWork is the game system download on the write page, with its Stop.
-func (s *screen) buildGuestWork() *fyne.Container {
-	s.guestStatus = wrapped("")
-	s.guestBar = widget.NewProgressBar()
-	s.guestStop = widget.NewButton(s.t("Stop"), func() {
-		if s.cancel != nil {
-			s.guestStop.Disable()
-			s.cancel()
-		}
-	})
-	s.guestWork = container.NewVBox(s.guestStatus, container.NewBorder(nil, nil, nil, s.guestStop, s.guestBar))
-	s.guestWork.Hide()
-	return s.guestWork
 }
 
 // flashGuest is what the writer needs of a downloaded release.

@@ -7,7 +7,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
@@ -15,45 +14,6 @@ import (
 	"github.com/andr36oid/andr36oid-sdflasher/internal/jobs"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/platform"
 )
-
-func (s *screen) chooseKernelCard() {
-	if s.busy {
-		return
-	}
-	s.setBusy(true)
-	go func() {
-		list := platform.List
-		if s.allDrives {
-			list = platform.ListAll
-		}
-		drives, err := list()
-		fyne.Do(func() {
-			s.setBusy(false)
-			if err != nil {
-				s.showError(err)
-				return
-			}
-			s.pickKernelCard(drives)
-		})
-	}()
-}
-func (s *screen) pickKernelCard(drives []platform.Drive) {
-	labels := []string{}
-	for _, d := range drives {
-		labels = append(labels, s.driveLabel(d))
-	}
-	if len(labels) == 0 {
-		s.info(s.t("Check for kernel update"), s.t("No removable cards found. Insert a card and refresh."), s.win)
-		return
-	}
-	pick := widget.NewSelect(labels, nil)
-	pick.PlaceHolder = s.t("Select a microSD card")
-	dialog.ShowCustomConfirm(s.t("Check for kernel update"), s.t("Continue"), s.t("Cancel"), container.NewVBox(wrapped(s.t("Choose an existing andr36oid card to check its kernel.")), pick), func(ok bool) {
-		if ok && pick.SelectedIndex() >= 0 {
-			s.offerKernelUpdate(drives[pick.SelectedIndex()], "", nil)
-		}
-	}, s.win)
-}
 
 // A nil offer (or unreadable/incompatible build) never produces an Apply page.
 func (s *screen) kernelOfferDetails(offer *catalog.KernelOffer) *fyne.Container {
@@ -65,11 +25,11 @@ func (s *screen) kernelOfferDetails(offer *catalog.KernelOffer) *fyne.Container 
 
 // after advances the post-flash flow to hotfixes. Standalone checks pass nil.
 func (s *screen) offerKernelUpdate(drive platform.Drive, expected string, after func()) {
-	previous := s.win.Content()
+	previous := s.current()
 	ctx, cancel := context.WithCancel(context.Background())
 	finish := func() {
 		cancel()
-		s.win.SetContent(previous)
+		s.show(previous)
 		s.setBusy(false)
 		if after != nil {
 			after()
@@ -86,12 +46,12 @@ func (s *screen) offerKernelUpdate(drive platform.Drive, expected string, after 
 	apply.Hide()
 	retry := widget.NewButton(s.t("Try again"), func() {
 		cancel()
-		s.win.SetContent(previous)
+		s.show(previous)
 		s.setBusy(false)
 		s.offerKernelUpdate(drive, expected, after)
 	})
 	retry.Hide()
-	s.win.SetContent(container.NewPadded(container.NewBorder(container.NewVBox(heading(s.t("Check for kernel update")), wrapped(drive.Label()), status, bar), container.NewHBox(skip, apply, retry), nil, nil, container.NewVScroll(items))))
+	s.leave(pageView(title(s.t("Check for kernel update")), wrapped(s.driveTitle(drive)), container.NewVBox(status, bar, items), nil, skip, retry, apply))
 	go func() {
 		result, err := jobs.Run(jobs.Request{Action: "kernel-list", Drive: drive}, nil)
 		var offer *catalog.KernelOffer

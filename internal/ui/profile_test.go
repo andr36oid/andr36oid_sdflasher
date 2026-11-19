@@ -3,6 +3,8 @@ package ui
 import (
 	"testing"
 
+	"fyne.io/fyne/v2"
+
 	"fyne.io/fyne/v2/test"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
@@ -34,8 +36,14 @@ func TestAutomaticProfileSelection(t *testing.T) {
 			if s.profile != tc.want {
 				t.Fatalf("selected %q, want %q", s.profile, tc.want)
 			}
-			if tc.want == "" && s.profileSelect.Selected != "" {
-				t.Fatal("unsupported profile still shown as selected")
+			for _, o := range s.consoleList.Objects {
+				if grid, ok := o.(*fyne.Container); ok {
+					for _, item := range grid.Objects {
+						if c := item.(*choiceCard); c.selected != (c.title.Text == shown(s.profileName()) && tc.want != "") {
+							t.Fatalf("%q shown as selected: %v", c.title.Text, c.selected)
+						}
+					}
+				}
 			}
 		})
 	}

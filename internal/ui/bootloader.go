@@ -35,7 +35,7 @@ func newBootDropdown(changed func(string)) *bootDropdown {
 			o := o
 			title := o.label
 			if o.reason != "" {
-				title += " — " + o.reason
+				title += " - " + o.reason
 			}
 			item := fyne.NewMenuItem(title, func() { d.changed(o.id) })
 			item.Disabled = o.reason != ""
@@ -204,10 +204,10 @@ func (p *bootloaderPicker) refresh() {
 				reason = p.s.t(firmware.BootloaderNeedImage)
 			}
 			if n == 0 && id != "image" && (p.builds[id] == nil || p.failed) {
-				reason = p.s.t("Looking for bootloader builds…")
+				reason = p.s.t("Looking for bootloader builds...")
 			}
 			if n == 2 && id == "mainline" && (p.builds["new"] == nil || p.failed) {
-				reason = p.s.t("Looking for bootloader builds…")
+				reason = p.s.t("Looking for bootloader builds...")
 			}
 			if p.unsupported {
 				reason = p.s.t(firmware.BootloaderOnlySD)
@@ -409,43 +409,8 @@ func (s *screen) bootloaderSummary(record *firmware.BootloaderRecord) string {
 	}
 	return s.t("Bootloader: as in the image")
 }
-func (s *screen) chooseBootloaderCard() {
-	if s.busy {
-		return
-	}
-	s.setBusy(true)
-	go func() {
-		list := platform.List
-		if s.allDrives {
-			list = platform.ListAll
-		}
-		drives, err := list()
-		fyne.Do(func() {
-			s.setBusy(false)
-			if err != nil {
-				s.showError(err)
-				return
-			}
-			labels := []string{}
-			for _, d := range drives {
-				labels = append(labels, s.driveLabel(d))
-			}
-			if len(labels) == 0 {
-				s.info(s.t("Boot options"), s.t("No removable cards found. Insert a card and refresh."), s.win)
-				return
-			}
-			pick := widget.NewSelect(labels, nil)
-			pick.PlaceHolder = s.t("Select a microSD card")
-			dialog.ShowCustomConfirm(s.t("Boot options"), s.t("Continue"), s.t("Cancel"), pick, func(ok bool) {
-				if ok && pick.SelectedIndex() >= 0 {
-					s.editBootloader(drives[pick.SelectedIndex()])
-				}
-			}, s.win)
-		})
-	}()
-}
 func (s *screen) editBootloader(drive platform.Drive) {
-	previous := s.win.Content()
+	previous := s.current()
 	s.setBusy(true)
 	go func() {
 		info, err := jobs.Run(jobs.Request{Action: "bootloader-info", Drive: drive}, nil)
@@ -496,11 +461,11 @@ func (s *screen) editBootloader(drive platform.Drive) {
 				if picker.cancel != nil {
 					picker.cancel()
 				}
-				s.win.SetContent(previous)
+				s.show(previous)
 				s.setBusy(false)
 			}
 			cancel := widget.NewButton(s.t("Cancel"), finish)
-			choose = widget.NewButton(s.t("Choose image from disk…"), func() {
+			choose = widget.NewButton(s.t("Choose image from disk..."), func() {
 				d := dialog.NewFileOpen(func(reader fyne.URIReadCloser, e error) {
 					if e != nil {
 						s.showError(e)
@@ -594,7 +559,7 @@ func (s *screen) editBootloader(drive platform.Drive) {
 			if picker.selection() == nil {
 				apply.Disable()
 			}
-			s.win.SetContent(container.NewPadded(container.NewBorder(container.NewVBox(heading(s.t("Boot options")), wrapped(drive.Label())), container.NewHBox(cancel, apply), nil, nil, container.NewVScroll(container.NewVBox(picker.box, choose, status, bar)))))
+			s.leave(pageView(title(s.t("Boot options")), wrapped(s.driveTitle(drive)), container.NewVBox(picker.box, container.NewHBox(choose), status, bar), nil, cancel, apply))
 			picker.load()
 		})
 	}()

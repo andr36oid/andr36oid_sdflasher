@@ -3,8 +3,12 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/storage"
@@ -15,10 +19,6 @@ import (
 	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/jobs"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/platform"
-	"os"
-	"path/filepath"
-	"sort"
-	"strings"
 )
 
 var Version = "development"
@@ -27,73 +27,123 @@ var Version = "development"
 const dataCardFirstStart = "At its first start, it offers to update andr36oid on the eMMC to this release too."
 
 type screen struct {
-	dtbLabel                            *widget.Label
-	dtbFile, dtbManifest, dtbLookup     string
-	bootloaderOptions                   *bootloaderPicker
-	bootloaderChoice                    firmware.BootloaderChoice
-	win                                 fyne.Window
-	locale                              string
-	started                             bool
-	update                              *catalog.AppUpdate
-	updateBanner                        *fyne.Container
-	updateCancel                        context.CancelFunc
-	language                            *widget.Button
-	drives                              []platform.Drive
-	updating                            bool
-	home                                fyne.CanvasObject
-	im                                  *firmware.Image
-	drive                               *platform.Drive
-	card                                *flash.Card
-	profile                             string
-	custom                              string
-	customAccepted                      bool
-	convert                             bool   // custom is the console's own DTB, converted while writing
-	system                              string // a different system image (GSI), "" for andr36oid's
-	systemAccepted                      bool
-	experimentalOK                      map[string]bool // experimental profiles whose warning was agreed to
-	allDrives                           bool            // advanced: fixed disks are listed too
-	allCheck                            *widget.Check
-	systemLabel                         *widget.Label
-	busy                                bool
-	releaseLabel, cardLabel, help       *widget.Label
-	console, profileSelect, driveSelect *widget.Select
-	mode                                *widget.RadioGroup
-	noROMs                              *widget.Check
-	action, local, online, refresh      *widget.Button
-	customLabel                         *widget.Label
-	step                                int
-	pages                               []*fyne.Container
-	stepButtons                         [stepCount]*widget.Button
-	back, next                          *widget.Button
-	cacheClear                          *widget.Button
-	cacheLabel                          *widget.Label
-	storage                             *fyne.Container
-	sizeLabel                           *widget.Label
-	sizeSlider                          *widget.Slider
-	sizeAuto                            *widget.Button
-	sizeSetting                         bool                    // refreshStorage is moving the slider
-	userdataGiB                         int                     // Android size for a new card, 0: recommended
-	guests                              map[string]*guestLookup // by system, for guestFor
-	guestFor                            string                  // release image the game system lookups were made for
-	guestChoice                         string                  // a catalog.GuestSources ID or catalog.NoGuest
-	guestChosen                         bool                    // the user picked guestChoice (no more preselection)
-	guestLabels                         []string                // guestRadio's options, in guestOptions' order
-	guestUpdating                       bool                    // refreshGuest is setting guestRadio
-	guestRadio                          *widget.RadioGroup
-	guestInfo                           *widget.Label
-	guestBox                            *fyne.Container
-	guestIntro                          *widget.Label
-	guestLookupCancel                   context.CancelFunc // stops the running lookups
-	guestWork                           *fyne.Container    // the game system download on the write page
-	guestStatus                         *widget.Label
-	guestBar                            *widget.ProgressBar
-	guestStop                           *widget.Button
-	closeAfter                          bool         // the window closes when the stopped download has ended
-	guestReady                          *flash.Guest // downloaded for the write being confirmed
-	sumValues                           [7]*widget.Label
-	modeHelp                            *widget.Label
-	progress                            *widget.ProgressBar
-	cancel                              context.CancelFunc
+	win     fyne.Window
+	locale  string
+	started bool
+	busy    bool
+	cancel  context.CancelFunc
+	// closeAfter: the window closes when the stopped download has ended
+	closeAfter bool
+
+	// the frame: side bar on the left, one page at a time on the right
+	body      *fyne.Container
+	sideSteps [stepCount]*widget.Button
+	// sideDims veil the steps a little while they can't be used (a write runs)
+	sideDims [stepCount]*canvas.Rectangle
+	pages    [stepCount]fyne.CanvasObject
+	backs    [stepCount]*widget.Button
+	nexts    [stepCount]*widget.Button
+	step     int
+	inSteps  bool // a step page is shown (not a fix flow, the working page or a result)
+	language *widget.Button
+	details  *widget.Button
+	log      []string
+
+	update       *catalog.AppUpdate
+	updateBanner *fyne.Container
+	updateCancel context.CancelFunc
+
+	// start: what the user wants to do
+	task       int
+	startCards [3]*choiceCard
+
+	// release
+	im                              *firmware.Image
+	assets, otherAssets             []catalog.Asset
+	asset                           *catalog.Asset // chosen for download, nil for a file from disk
+	assetsLooking, assetsDone       bool
+	assetsErr                       error
+	releaseCard                     *choiceCard
+	releaseLabel                    *widget.Label
+	progress                        *widget.ProgressBar
+	stopLoad                        *widget.Button
+	dtbLabel                        *widget.Label
+	dtbFile, dtbManifest, dtbLookup string
+
+	// card
+	drives     []platform.Drive
+	drive      *platform.Drive
+	card       *flash.Card
+	listing    bool
+	listed     bool
+	inspecting bool
+	allDrives  bool // advanced: fixed disks are listed too
+	allCheck   *widget.Check
+	cardRows   *fyne.Container
+	cardLabel  *widget.Label
+	cardNote   *fyne.Container
+	refresh    *widget.Button
+
+	// console
+	profile        string
+	experimentalOK map[string]bool // experimental profiles whose warning was agreed to
+	search         *widget.Entry
+	consoleLead    *widget.Label
+	consoleList    *fyne.Container
+	expBox         *fyne.Container
+	custom         string
+	customAccepted bool
+	convert        bool // custom is the console's own DTB, converted while writing
+	customLabel    *widget.Label
+	customClear    *widget.Button
+
+	// options
+	updating          bool
+	noROMs            *widget.Check
+	storageBox        *fyne.Container
+	storageKept       *widget.Label
+	sizeLabel         *widget.Label
+	sizeSlider        *widget.Slider
+	sizeAuto          *widget.Button
+	sizeSetting       bool                    // refreshStorage is moving the slider
+	userdataGiB       int                     // Android size for a new card, 0: recommended
+	guests            map[string]*guestLookup // by system, for guestFor
+	guestFor          string                  // release image the game system lookups were made for
+	guestChoice       string                  // a catalog.GuestSources ID or catalog.NoGuest
+	guestLast         string                  // the system chosen before the box was unticked
+	guestChosen       bool                    // the user picked guestChoice (no more preselection)
+	guestLabels       []string                // guestRadio's options, in guestOptions' order
+	guestUpdating     bool                    // refreshGuest is setting guestRadio
+	guestRadio        *widget.RadioGroup
+	guestCheck        *widget.Check
+	guestCheckRow     fyne.CanvasObject
+	guestChange       *widget.Button
+	guestInfo         *widget.Label
+	guestBox          *fyne.Container
+	guestLookupCancel context.CancelFunc // stops the running lookups
+	fixCount          int                // bug fixes published for the release, -1 while unknown
+	fixesFor          string
+	applyFixes        bool
+	fixBox            *fyne.Container
+	fixCheck          *widget.Check
+	fixLabel          *tapLabel
+	fixInfo           *widget.Label
+	advancedBox       *fyne.Container
+	system            string // a different system image (GSI), "" for andr36oid's
+	systemAccepted    bool
+	systemLabel       *widget.Label
+	bootloaderOptions *bootloaderPicker
+	bootloaderChoice  firmware.BootloaderChoice
+
+	// write
+	writeTitle *widget.Label
+	summary    *fyne.Container
+	writeNotes *fyne.Container
+	eraseCheck *widget.Check
+	eraseRow   fyne.CanvasObject
+	eraseText  string
+	eraseOK    bool
+	action     *widget.Button
 }
 
 // RunSafe runs the graphical interface and returns an error instead of hanging
@@ -133,7 +183,7 @@ func Run() {
 	w := a.NewWindow("andr36oid SD Flasher")
 	s := &screen{win: w, locale: preferredLocale(a)}
 	s.localizeDialogs()
-	w.Resize(fyne.NewSize(820, 760))
+	w.Resize(fyne.NewSize(980, 680))
 	w.CenterOnScreen()
 	w.SetCloseIntercept(func() {
 		if s.busy && s.cancel != nil {
@@ -170,15 +220,14 @@ func Run() {
 }
 
 // showHelperMissing fills the window with a plain explanation when the disk
-// helper isn't beside the app — most often because the executable was run from
+// helper isn't beside the app, most often because the executable was run from
 // inside the downloaded zip rather than an extracted folder.
 func (s *screen) showHelperMissing() {
-	title := wrapped(s.t("The flasher can't start"))
-	title.TextStyle = fyne.TextStyle{Bold: true}
-	body := wrapped(s.t("The disk helper that writes the card is missing. If you launched this from inside the downloaded zip, unzip the whole download first and run the flasher from the extracted folder — keep both andr36oid SD Flasher files together."))
+	body := wrapped(s.t("The disk helper that writes the card is missing. If you launched this from inside the downloaded zip, unzip the whole download first and run the flasher from the extracted folder - keep both andr36oid SD Flasher files together."))
 	quit := widget.NewButton(s.t("Quit"), func() { s.win.Close() })
-	s.win.SetContent(container.NewBorder(nil, container.NewHBox(quit), nil, nil, container.NewVBox(title, body)))
+	s.win.SetContent(container.NewPadded(pageView(title(s.t("The flasher can't start")), nil, body, nil, quit)))
 }
+
 func (s *screen) t(key string, args ...any) string {
 	if len(args) == 0 {
 		key, args = firmware.DTBErrorDetails(key)
@@ -191,9 +240,7 @@ func (s *screen) t(key string, args ...any) string {
 func (s *screen) failureHints(e error) string {
 	out := ""
 	for _, line := range flash.FailureHints(flash.Classify(e), false) {
-		if out == "" {
-			out = "\n\n"
-		} else {
+		if out != "" {
 			out += "\n"
 		}
 		out += s.t(line)
@@ -214,236 +261,100 @@ func wrapped(text string) *widget.Label {
 	l.Wrapping = fyne.TextWrapWord
 	return l
 }
+
+// build makes every page and the frame around them. It runs again when the
+// language changes; everything chosen so far stays.
 func (s *screen) build() {
-	oldProfile, oldUpdate, oldROMs, oldStep := s.profile, s.updating, false, s.step
+	// nothing is brought up to date while the pages are made
+	s.action = nil
+	oldROMs := false
 	if s.noROMs != nil {
 		oldROMs = s.noROMs.Checked
 	}
-	s.action = nil
-	s.pages = nil
-	s.stepButtons = [stepCount]*widget.Button{}
-	s.releaseLabel = wrapped(s.t("Choose a release to see its supported consoles and panels."))
-	s.cardLabel = wrapped(s.t("Insert a microSD card, then select it below."))
-	s.help = wrapped("")
-	s.modeHelp = wrapped("")
-	s.local = widget.NewButton(s.t("Choose image from disk…"), s.chooseImage)
-	s.online = widget.NewButton(s.t("Download a release…"), s.releases)
-	s.online.Importance = widget.HighImportance
-	s.refresh = widget.NewButton(s.t("Refresh cards"), s.listDrives)
-	s.console = widget.NewSelect(nil, func(name string) {
-		s.profile = ""
-		var opts []string
-		if s.im != nil {
-			for _, p := range s.im.Profiles {
-				if p.For(name) {
-					label := p.Name
-					if p.Experimental {
-						label += " (" + s.t("experimental") + ")"
-					}
-					opts = append(opts, label)
-				}
-			}
-		}
-		s.profileSelect.SetOptions(opts)
-		s.profileSelect.ClearSelected()
-		if len(opts) == 1 {
-			s.profileSelect.SetSelected(opts[0])
-		}
-		s.ready()
-	})
-	s.console.PlaceHolder = s.t("Choose your console / board family")
-	s.profileSelect = widget.NewSelect(nil, func(label string) {
-		s.profile = ""
-		var chosen *firmware.Profile
-		if s.im != nil {
-			for i, p := range s.im.Profiles {
-				name := p.Name
-				if p.Experimental {
-					name += " (" + s.t("experimental") + ")"
-				}
-				if name == label {
-					chosen = &s.im.Profiles[i]
-				}
-			}
-		}
-		if chosen != nil && chosen.Experimental {
-			p := *chosen
-			s.confirmExperimental(p, func(ok bool) {
-				if ok {
-					s.profile = p.ID
-				} else {
-					s.profileSelect.ClearSelected()
-				}
-				s.ready()
-			})
-		} else if chosen != nil {
-			s.profile = chosen.ID
-		}
-		s.ready()
-	})
-	s.profileSelect.PlaceHolder = s.t("Choose your board and screen")
-	s.allCheck = widget.NewCheck(s.t("Show all drives (advanced)"), nil)
-	s.allCheck.SetChecked(s.allDrives)
-	s.allCheck.OnChanged = s.setAllDrives
-	s.driveSelect = widget.NewSelect(nil, nil)
-	s.driveSelect.PlaceHolder = s.t("Select a microSD card")
+	if s.fixCount == 0 && s.fixesFor == "" {
+		s.fixCount = -1
+		s.applyFixes = true
+	}
 	s.noROMs = widget.NewCheck(s.t("Use all available storage for Android"), func(bool) { s.ready() })
+	s.noROMs.SetChecked(oldROMs)
 	s.buildStorage()
 	s.buildGuest()
-	s.mode = widget.NewRadioGroup([]string{s.t("Install a new card (erase)"), s.t("Update an existing installation")}, func(v string) {
-		s.updating = v == s.t("Update an existing installation")
-		if s.updating {
-			s.noROMs.Disable()
-			if s.card != nil {
-				s.noROMs.SetChecked(s.card.NoROMs)
-			}
-			s.modeHelp.SetText(s.t("Apps, settings, saves, and games will be preserved."))
-			s.modeHelp.Importance = widget.MediumImportance
-			if s.card != nil && !s.card.Installed {
-				s.modeHelp.SetText(s.t("New installation required") + ": " + s.card.Reason)
-				s.modeHelp.Importance = widget.DangerImportance
-			}
-		} else {
-			s.noROMs.Enable()
-			s.modeHelp.SetText(s.t("Everything currently on this card will be erased."))
-			if s.tooSmall() {
-				s.modeHelp.SetText(s.tooSmallText())
-			}
-			s.modeHelp.Importance = widget.DangerImportance
-		}
-		s.modeHelp.Refresh()
-		s.ready()
-	})
-	s.mode.SetSelected(s.t("Install a new card (erase)"))
-	s.customLabel = wrapped(s.t("Use the DTB shipped with the selected profile."))
-	custom := widget.NewButton(s.t("Choose custom Android DTB…"), s.chooseCustom)
-	clear := widget.NewButton(s.t("Use shipped DTB"), func() {
-		s.custom = ""
-		s.customAccepted = false
-		s.convert = false
-		s.customLabel.SetText(s.dtbText())
-		s.ready()
-	})
-	advanced := widget.NewAccordion(widget.NewAccordionItem(s.t("Advanced: custom DTB"), container.NewVBox(wrapped(s.t(firmware.CustomWarning)), container.NewHBox(custom, clear))))
-	s.action = widget.NewButton(s.t("Continue"), s.confirm)
-	s.action.Importance = widget.DangerImportance
-	s.action.Disable()
-	s.progress = widget.NewProgressBar()
-	s.progress.Hide()
-	s.sumValues = [7]*widget.Label{}
-	s.pages = s.pagesFor(advanced)
+	s.pages = [stepCount]fyne.CanvasObject{
+		s.startPage(), s.releasePage(), s.cardPage(), s.consolePage(), s.optionsPage(), s.writePage(),
+	}
 	s.populateImage()
-	s.profile = oldProfile
-	s.selectProfile(oldProfile)
-	s.noROMs.SetChecked(oldROMs)
-	if oldUpdate {
-		s.mode.SetSelected(s.t("Update an existing installation"))
-	}
+	s.selectProfile(s.profile)
 	s.customLabel.SetText(s.dtbText())
-	s.populateDrives(false)
-	s.cardDescription()
-	var bar []fyne.CanvasObject
-	for i := range s.stepButtons {
-		step := i
-		s.stepButtons[i] = widget.NewButton("", func() { s.showStep(step) })
-		bar = append(bar, s.stepButtons[i])
+	s.body = container.NewStack()
+	s.win.SetPadded(false)
+	s.win.SetContent(container.New(atLeast{fyne.NewSize(900, 620)}, container.NewBorder(nil, nil, s.sideBar(), nil, container.NewPadded(s.body))))
+	s.showStep(s.step)
+	if !s.inSteps {
+		s.showStep(stepStart)
 	}
-	s.back = widget.NewButton(s.t("Back"), func() { s.showStep(s.step - 1) })
-	s.next = widget.NewButton(s.t("Next"), func() { s.showStep(s.step + 1) })
-	s.next.Importance = widget.HighImportance
-	s.language = widget.NewButton(s.languageName(), s.chooseLanguage)
-	s.updateBanner = container.NewVBox()
-	s.renderAppUpdate()
-	// Title row with the same one-line purpose the Android app shows, so both
-	// surfaces open on the same words; then the step bar.
-	header := container.NewVBox(
-		container.NewBorder(nil, nil, nil, container.NewVBox(s.language), container.NewVBox(
-			widget.NewLabelWithStyle("andr36oid SD Flasher", 0, fyne.TextStyle{Bold: true}),
-			wrapped(s.t("Set up or update your andr36oid card")))),
-		s.updateBanner,
-		container.NewGridWithColumns(stepCount, bar...),
-		widget.NewSeparator())
-	var pages []fyne.CanvasObject
-	for _, p := range s.pages {
-		pages = append(pages, p)
-	}
-	s.cacheLabel = widget.NewLabel("")
-	s.cacheClear = widget.NewButton(s.t("Clear cached files"), s.clearCache)
-	// Footer hierarchy: Back/Next sit right under the page, as the one thing to
-	// do next; the occasional tools (hotfixes, kernel update, restore, cache)
-	// are quiet low-importance buttons in two compact rows below a separator.
-	hotfix := widget.NewButton(s.t("Apply hotfixes"), s.chooseHotfixCard)
-	kernel := widget.NewButton(s.t("Check for kernel update"), s.chooseKernelCard)
-	loader := widget.NewButton(s.t("Boot options"), s.chooseBootloaderCard)
-	dtbs := widget.NewButton(s.t("Update device trees"), s.chooseDTBPackCard)
-	restore := widget.NewButton(s.t("Restore an interrupted update…"), s.recover)
-	for _, b := range []*widget.Button{hotfix, kernel, dtbs, loader, restore, s.cacheClear} {
-		b.Importance = widget.LowImportance
-	}
-	footer := container.NewVBox(
-		widget.NewSeparator(),
-		container.NewBorder(nil, nil, s.back, s.next),
-		widget.NewSeparator(),
-		container.NewGridWithColumns(3, hotfix, container.NewVBox(kernel, dtbs, loader), restore),
-		container.NewBorder(nil, nil, s.cacheClear, widget.NewLabel("GPLv3 · "+Version), s.cacheLabel))
-	s.showCacheUsage(cacheTotal())
-	s.home = container.NewPadded(container.NewBorder(header, footer, nil, nil, container.NewVScroll(container.NewStack(pages...))))
-	s.win.SetContent(s.home)
-	s.showStep(oldStep)
+	s.refreshCards()
 	s.ready()
 }
+
+// ready brings everything that depends on the choices up to date.
 func (s *screen) ready() {
 	if s.action == nil {
 		return
-	}
-	if !s.busy && s.im != nil && s.drive != nil && s.card != nil && s.profile != "" && !(s.updating && !s.card.Installed) && !s.tooSmall() && !s.guestBlocked() {
-		s.action.Enable()
-	} else {
-		s.action.Disable()
 	}
 	if s.bootloaderOptions != nil {
 		s.bootloaderOptions.setTarget(s.im != nil, s.drive != nil && s.drive.Fixed || s.card != nil && s.card.DataCard)
 	}
 	s.refreshGuest()
 	s.refreshStorage()
+	s.refreshFixes()
+	s.refreshRelease()
+	s.refreshCardNote()
+	if s.customClear != nil {
+		if s.custom == "" {
+			s.customClear.Hide()
+		} else {
+			s.customClear.Show()
+		}
+	}
 	s.refreshSteps()
-	if s.step == stepWrite {
-		s.summarize()
+	s.summarize()
+	if s.writable() {
+		s.action.Enable()
+	} else {
+		s.action.Disable()
 	}
 }
+
+// writable: everything is chosen and, where the page asks for it, ticked.
+func (s *screen) writable() bool {
+	return !s.busy && s.reachable(stepWrite) && (!s.needsTick() || s.eraseOK)
+}
+
 func (s *screen) setBusy(v bool) {
 	s.busy = v
-	for _, b := range []*widget.Button{s.local, s.online, s.refresh, s.language} {
+	for _, b := range []*widget.Button{s.refresh, s.language} {
+		if b == nil {
+			continue
+		}
 		if v {
 			b.Disable()
 		} else {
 			b.Enable()
 		}
 	}
-	for _, x := range []*widget.Select{s.console, s.profileSelect, s.driveSelect} {
-		if v {
-			x.Disable()
+	if s.noROMs != nil {
+		if v || s.updating {
+			s.noROMs.Disable()
 		} else {
-			x.Enable()
-		}
-	}
-	if v {
-		s.mode.Disable()
-		s.noROMs.Disable()
-	} else {
-		s.mode.Enable()
-		if !s.updating {
 			s.noROMs.Enable()
 		}
 	}
-	s.refreshCacheUsage()
+	s.refreshCards()
 	s.ready()
 }
 
 // cacheTotal is the size of the flasher's cache directory, or 0 if it can't be
-// read. It walks the cache, so callers on the UI goroutine should keep it off
-// the hot path for a very large cache (refreshCacheUsage does the walk in the
-// background).
+// read. It walks the cache, so it runs off the UI goroutine for a large cache.
 func cacheTotal() int64 {
 	dir, e := jobs.CacheDir()
 	if e != nil {
@@ -453,37 +364,9 @@ func cacheTotal() int64 {
 	return total
 }
 
-// showCacheUsage displays a cache size next to the Clear button and enables that
-// button only when there is something to clear and the flasher is idle. It must
-// run on the UI goroutine.
-func (s *screen) showCacheUsage(total int64) {
-	if s.cacheLabel == nil {
-		return
-	}
-	s.cacheLabel.SetText(s.t("Cached files: %s", humanBytes(total)))
-	if total > 0 && !s.busy {
-		s.cacheClear.Enable()
-	} else {
-		s.cacheClear.Disable()
-	}
-}
-
-// refreshCacheUsage measures the cache in the background and updates the display.
-// It is for live updates once the window is running; build() sets the initial
-// size synchronously with showCacheUsage.
-func (s *screen) refreshCacheUsage() {
-	if s.cacheLabel == nil {
-		return
-	}
-	go func() {
-		total := cacheTotal()
-		fyne.Do(func() { s.showCacheUsage(total) })
-	}()
-}
-
 // clearCache frees the flasher's cached downloads and unpacked images. If the
 // cache holds recovery backups, it asks first whether to delete those too.
-func (s *screen) clearCache() {
+func (s *screen) clearCache(done func()) {
 	if s.busy {
 		return
 	}
@@ -494,7 +377,8 @@ func (s *screen) clearCache() {
 	}
 	do := func(deleteBackups bool) {
 		firmware.ClearWorkDir(dir, deleteBackups)
-		s.refreshCacheUsage()
+		s.logf("cleared cached files (backups too: %v)", deleteBackups)
+		done()
 	}
 	if _, _, backups := firmware.WorkDirUsage(dir); backups > 0 {
 		var d dialog.Dialog
@@ -502,6 +386,7 @@ func (s *screen) clearCache() {
 		del := widget.NewButton(s.t("Delete everything"), func() { d.Hide(); do(true) })
 		body := s.t("This frees the space used by downloaded and unpacked images. You also have %d recovery backup(s) you could still restore from. Delete those too?", backups)
 		d = dialog.NewCustom(s.t("Clear cached files"), s.t("Cancel"), container.NewVBox(wrapped(body), container.NewHBox(keep, del)), s.win)
+		fitDialog(d, body+"\n\n", s.win)
 		d.Show()
 		return
 	}
@@ -521,7 +406,11 @@ func humanBytes(n int64) string {
 		return fmt.Sprintf("%d B", n)
 	}
 }
+
 func (s *screen) chooseImage() {
+	if s.busy {
+		return
+	}
 	d := dialog.NewFileOpen(func(r fyne.URIReadCloser, e error) {
 		if e != nil {
 			s.showError(e)
@@ -532,12 +421,13 @@ func (s *screen) chooseImage() {
 		}
 		p := r.URI().Path()
 		r.Close()
+		s.asset = nil
 		s.loadImage(p)
 	}, s.win)
 	// release images come packed: only .img.xz, .img.gz and .img.zip are listed
 	d.SetFilter(storage.NewExtensionFileFilter([]string{".xz", ".gz", ".zip"}))
 	directory, _ := os.Getwd()
-	if s.im != nil && s.im.Source != "" {
+	if s.im != nil && s.im.Source != "" && filepath.IsAbs(s.im.Source) {
 		directory = filepath.Dir(s.im.Source)
 	}
 	if location, err := storage.ListerForURI(storage.NewFileURI(directory)); err == nil {
@@ -545,6 +435,7 @@ func (s *screen) chooseImage() {
 	}
 	d.Show()
 }
+
 func (s *screen) loadImage(p string, origin ...string) {
 	// a build too old for this flasher: refused by its name, before it is unpacked
 	if date, old := firmware.TooOld(p); old {
@@ -552,6 +443,7 @@ func (s *screen) loadImage(p string, origin ...string) {
 		s.info(s.t("This image is too old"), s.t("This image was built on %s. Builds from before 22 October 2026 don't work with this flasher. Download a current release instead.", date), s.win)
 		return
 	}
+	s.logf("checking image %s", p)
 	s.setBusy(true)
 	// The previous selection's staged image is now superseded; remove it so a
 	// session that tries several releases doesn't pile up decompressed copies.
@@ -565,12 +457,13 @@ func (s *screen) loadImage(p string, origin ...string) {
 	s.custom = ""
 	s.customAccepted = false
 	s.convert = false
-	s.customLabel.SetText(s.t("Use the DTB shipped with the selected profile."))
-	s.releaseLabel.SetText(s.t("Checking the release image…"))
+	s.customLabel.SetText(s.dtbText())
+	s.releaseLabel.SetText(s.t("Checking the release image..."))
 	s.progress.SetValue(0)
 	s.progress.Show()
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
+	s.ready()
 	go func() {
 		dir, e := jobs.CacheDir()
 		var im *firmware.Image
@@ -588,25 +481,31 @@ func (s *screen) loadImage(p string, origin ...string) {
 				return
 			}
 			if e != nil {
+				s.logf("image rejected: %v", e)
 				s.releaseLabel.SetText(s.t("Image rejected. Choose an andr36oid Treble release."))
 				if !stopped {
 					s.showError(e)
+				} else {
+					s.releaseLabel.SetText("")
 				}
 				return
 			}
+			s.releaseLabel.SetText("")
 			if len(origin) > 0 {
 				im.Source = origin[0]
 			}
+			s.logf("image %s: %d profiles, build %s", im.Version, len(im.Profiles), im.BuildIdentity)
 			s.im = im
 			s.populateImage()
 			s.autoProfile()
-			if s.step == stepImage {
+			if s.inSteps && s.step == stepImage {
 				s.showStep(stepCard)
 			}
 			s.ready()
 		})
 	}()
 }
+
 func (s *screen) progressFn() func(int64, int64) {
 	return func(n, total int64) {
 		fyne.Do(func() {
@@ -616,11 +515,14 @@ func (s *screen) progressFn() func(int64, int64) {
 		})
 	}
 }
+
+// autoProfile chooses the profile the card was set up with, or Panel 4 for a new
+// card. An experimental one is only chosen here: its warning waits on the console page.
 func (s *screen) autoProfile() {
 	if s.card != nil && s.card.Profile != "" {
 		if !s.selectProfile(s.card.Profile) {
 			s.profile = ""
-			s.console.ClearSelected()
+			s.refreshConsoles()
 		}
 		return
 	}
@@ -628,189 +530,43 @@ func (s *screen) autoProfile() {
 		s.selectProfile("Panels/Panel4")
 	}
 }
+
 func (s *screen) selectProfile(id string) bool {
 	if s.im == nil {
 		return false
 	}
 	for _, p := range s.im.Profiles {
 		if p.ID == id {
-			s.console.SetSelected(p.Console)
-			label := p.Name
-			if p.Experimental {
-				label += " (" + s.t("experimental") + ")"
-			}
-			s.profileSelect.SetSelected(label)
+			s.profile = id
+			s.refreshConsoles()
 			return true
 		}
 	}
 	return false
 }
+
 func (s *screen) populateImage() {
 	if s.im == nil {
 		return
 	}
-	s.releaseLabel.SetText(s.im.Version + " · " + s.t("%d device profiles", len(s.im.Profiles)) + "\n" + filepath.Base(s.im.Source))
-	families := map[string]bool{}
-	var opts []string
-	for _, p := range s.im.Profiles {
-		for _, c := range append([]string{p.Console}, p.AlsoFor...) {
-			if !families[c] {
-				families[c] = true
-				opts = append(opts, c)
-			}
-		}
-	}
-	sort.Strings(opts)
-	s.console.SetOptions(opts)
-	s.console.ClearSelected()
+	s.refreshConsoles()
 	s.lookupGuest()
 	s.lookupImageDTBs()
-}
-
-// driveLabel is a drive as the list shows it: fixed disks are marked
-func (s *screen) driveLabel(d platform.Drive) string {
-	label := d.Label()
-	if d.Fixed {
-		label = s.t("Not a removable card") + ": " + label
+	s.lookupFixes()
+	if s.dtbLabel != nil && s.im.DTBVersion != "" {
+		s.dtbLabel.SetText(s.t("Using device trees from %s", s.im.DTBVersion))
 	}
-	if d.WriteProtected {
-		label += " · " + s.t(platform.WriteProtectedReason)
-	}
-	return label
-}
-
-// setAllDrives switches listing fixed disks on (after the warning) or off.
-func (s *screen) setAllDrives(on bool) {
-	if !on {
-		s.allDrives = false
-		s.listDrives()
-		return
-	}
-	if s.allDrives {
-		return
-	}
-	s.agreeDialog(s.t("Show all drives?"), s.t("This also lists hard drives, SSDs and other disks that are not a USB card reader or an SD slot. Pick the wrong one and everything on it is gone for good: your files, other operating systems, backups.\n\nThe disk your computer runs from is never listed, but every other disk is. andr36oid only supports microSD cards, so nobody can help with a disk written this way.\n\nUse this only if you know exactly which disk is your card, for example a card reader that shows up as an internal disk."), s.t("I understand that choosing the wrong disk erases it, and that this is unsupported."), func(ok bool) {
-		s.allDrives = ok
-		if !ok {
-			s.allCheck.OnChanged = nil
-			s.allCheck.SetChecked(false)
-			s.allCheck.OnChanged = s.setAllDrives
-			return
-		}
-		s.listDrives()
-	})
-}
-
-func (s *screen) populateDrives(reset bool) {
-	var opts []string
-	for _, d := range s.drives {
-		opts = append(opts, s.driveLabel(d))
-	}
-	s.driveSelect.OnChanged = nil
-	s.driveSelect.SetOptions(opts)
-	if reset {
-		s.driveSelect.ClearSelected()
-		s.drive = nil
-		s.card = nil
-	} else if s.drive != nil {
-		s.driveSelect.SetSelected(s.driveLabel(*s.drive))
-	}
-	s.driveSelect.OnChanged = func(label string) {
-		for _, d := range s.drives {
-			if s.driveLabel(d) != label {
-				continue
-			}
-			if d.WriteProtected {
-				// listed so that people find their card, never written
-				s.drive, s.card = nil, nil
-				s.cardLabel.SetText(s.t("This card can't be used: %s.", s.t(platform.WriteProtectedReason)) + " " + s.t("Then refresh the list."))
-				s.ready()
-				break
-			}
-			s.inspectDrive(d)
-			break
-		}
-	}
-	if len(opts) == 0 {
-		s.cardLabel.SetText(s.t("No removable cards found. Insert a card and refresh."))
-	}
-	s.ready()
 }
 
 // tooSmall: a new installation on a card under flash.MinCardBytes
 func (s *screen) tooSmall() bool {
 	return !s.updating && s.drive != nil && flash.TooSmall(s.drive.Size) != nil
 }
+
 func (s *screen) tooSmallText() string {
 	return s.t("This card is too small. andr36oid needs a card of at least 16 GB; this one has %.1f GB.", float64(s.drive.Size)/1e9)
 }
-func (s *screen) cardDescription() {
-	if s.card == nil {
-		return
-	}
-	if !s.card.Installed && s.drive != nil && flash.TooSmall(s.drive.Size) != nil {
-		s.cardLabel.SetText(s.tooSmallText())
-		return
-	}
-	if s.card.Installed {
-		key := s.t("Legacy andr36oid — will migrate to Treble")
-		if s.card.Treble {
-			key = s.t("Treble installation")
-		}
-		s.cardLabel.SetText(s.t(key) + ". " + s.t("Apps, settings, saves, and games will be preserved."))
-	} else {
-		s.cardLabel.SetText(s.t("New installation required") + ": " + s.card.Reason)
-	}
-}
-func (s *screen) listDrives() {
-	s.refresh.Disable()
-	go func() {
-		list := platform.List
-		if s.allDrives {
-			list = platform.ListAll
-		}
-		ds, e := list()
-		fyne.Do(func() {
-			s.refresh.Enable()
-			if e != nil {
-				s.cardLabel.SetText(s.t("Could not list cards") + ": " + e.Error())
-				return
-			}
-			s.drives = ds
-			s.populateDrives(true)
-		})
-	}()
-}
-func (s *screen) inspectDrive(d platform.Drive) {
-	s.setBusy(true)
-	s.drive = &d
-	s.card = nil
-	s.cardLabel.SetText(s.t("Inspecting the card. Your computer may request administrator access."))
-	go func() {
-		result, e := jobs.Run(jobs.Request{Action: "inspect", Drive: d}, nil)
-		fyne.Do(func() {
-			s.setBusy(false)
-			if e != nil {
-				s.cardLabel.SetText(s.t("Card inspection failed."))
-				s.showError(e)
-				return
-			}
-			s.card = result.Card
-			if s.card == nil {
-				return
-			}
-			if s.card.Installed {
-				s.mode.SetSelected(s.t("Update an existing installation"))
-				s.noROMs.SetChecked(s.card.NoROMs)
-				s.autoProfile()
-			} else {
-				s.mode.SetSelected(s.t("Install a new card (erase)"))
-			}
-			s.cardDescription()
-			s.ready()
-		})
-	}()
-}
+
 func (s *screen) chooseCustom() {
 	if s.busy {
 		return
@@ -831,77 +587,128 @@ func (s *screen) chooseCustom() {
 			r.Close()
 			s.customAccepted = true
 			s.convert = false
-			s.customLabel.SetText(s.t("Custom Android DTB") + ": " + filepath.Base(s.custom))
+			s.customLabel.SetText(s.dtbText())
+			s.ready()
 		}, s.win)
 		d.SetFilter(storage.NewExtensionFileFilter([]string{".dtb"}))
 		d.Show()
 	}, s.win)
 }
-func (s *screen) releases() {
-	s.setBusy(true)
-	s.releaseLabel.SetText(s.t("Checking GitHub releases…"))
+
+func (s *screen) clearCustom() {
+	s.custom = ""
+	s.customAccepted = false
+	s.convert = false
+	s.customLabel.SetText(s.dtbText())
+	s.ready()
+}
+
+// lookupReleases finds the published releases once, so the newest can be offered.
+func (s *screen) lookupReleases() {
+	if !s.started || s.assetsLooking || s.assetsDone {
+		return
+	}
+	s.assetsLooking = true
+	s.refreshRelease()
 	go func() {
 		assets, e := catalog.List(context.Background())
 		fyne.Do(func() {
-			s.setBusy(false)
-			if e != nil {
-				s.showError(e)
-				return
-			}
-			if len(assets) == 0 {
-				s.info(s.t("No image downloads available"), s.t("No disk images are attached to andr36oid/releases yet. You can choose an image from disk."), s.win)
-				return
-			}
-			// each release's recommended image first; the other kernels only on request
-			first, others := catalog.Split(assets)
-			shown := first
-			label := func(a catalog.Asset) string {
-				text := a.Release + " · " + a.Name
-				if k, g, ok := catalog.Variant(a.Name); ok {
-					text = a.Release + " · " + s.variantText(k, g)
-					if catalog.Recommended(a.Name) {
-						text += " · " + s.t("recommended")
-					}
+			s.assetsLooking, s.assetsDone, s.assetsErr = false, e == nil, e
+			if e == nil {
+				s.assets, s.otherAssets = catalog.Split(assets)
+				s.logf("%d release images found", len(assets))
+				if s.asset == nil && s.im == nil && len(s.assets) > 0 {
+					s.asset = &s.assets[0]
 				}
-				return text
+			} else {
+				s.logf("release list failed: %v", e)
 			}
-			labels := func(list []catalog.Asset) []string {
-				var opts []string
-				for _, a := range list {
-					opts = append(opts, label(a))
-				}
-				return opts
-			}
-			pick := widget.NewSelect(labels(shown), nil)
-			pick.PlaceHolder = s.t("Choose a release image")
-			box := container.NewVBox(wrapped(s.t("Only Treble images can be installed. Each download is checked before the card can be written.")), pick)
-			if len(first) > 0 {
-				pick.SetSelectedIndex(0)
-			}
-			if len(others) > 0 {
-				more := widget.NewCheck(s.t("Other kernels"), func(on bool) {
-					shown = first
-					if on {
-						shown = append(append([]catalog.Asset{}, first...), others...)
-					}
-					pick.SetOptions(labels(shown))
-					pick.SetSelectedIndex(0)
-				})
-				box.Add(more)
-				box.Add(wrapped(s.t("Try the recommended image first. If something does not work on your console, flash the same release with kernel 4.19: your apps, saves and games stay when you choose Update.")))
-			}
-			dialog.ShowCustomConfirm(s.t("Download a release"), s.t("Download"), s.t("Cancel"), box, func(ok bool) {
-				if !ok {
-					return
-				}
-				i := pick.SelectedIndex()
-				if i < 0 || i >= len(shown) {
-					return
-				}
-				s.download(shown[i])
-			}, s.win)
+			s.ready()
 		})
 	}()
+}
+
+// releases is the list of every published release, for "Other releases".
+func (s *screen) releases() {
+	if s.busy {
+		return
+	}
+	if !s.assetsDone {
+		s.assetsDone, s.assetsErr = false, nil
+		s.setBusy(true)
+		go func() {
+			assets, e := catalog.List(context.Background())
+			fyne.Do(func() {
+				s.setBusy(false)
+				if e != nil {
+					s.showError(e)
+					return
+				}
+				s.assetsDone = true
+				s.assets, s.otherAssets = catalog.Split(assets)
+				s.releases()
+			})
+		}()
+		return
+	}
+	if len(s.assets)+len(s.otherAssets) == 0 {
+		s.info(s.t("No image downloads available"), s.t("No disk images are attached to andr36oid/releases yet. You can choose an image from disk."), s.win)
+		return
+	}
+	// each release's recommended image first; the other kernels only on request
+	first, others := s.assets, s.otherAssets
+	shown := first
+	labels := func(list []catalog.Asset) []string {
+		var opts []string
+		for _, a := range list {
+			opts = append(opts, s.assetLabel(a))
+		}
+		return opts
+	}
+	pick := widget.NewSelect(labels(shown), nil)
+	pick.PlaceHolder = s.t("Choose a release image")
+	box := container.NewVBox(wrapped(s.t("Only Treble images can be installed. Each download is checked before the card can be written.")), pick)
+	if len(first) > 0 {
+		pick.SetSelectedIndex(0)
+	}
+	if len(others) > 0 {
+		more := widget.NewCheck(s.t("Other kernels"), func(on bool) {
+			shown = first
+			if on {
+				shown = append(append([]catalog.Asset{}, first...), others...)
+			}
+			pick.SetOptions(labels(shown))
+			pick.SetSelectedIndex(0)
+		})
+		box.Add(more)
+		box.Add(wrapped(s.t("Try the recommended image first. If something does not work on your console, flash the same release with kernel 4.19: your apps, saves and games stay when you choose Update.")))
+	}
+	d := dialog.NewCustomConfirm(s.t("Download a release"), s.t("Download"), s.t("Cancel"), box, func(ok bool) {
+		if !ok {
+			return
+		}
+		i := pick.SelectedIndex()
+		if i < 0 || i >= len(shown) {
+			return
+		}
+		a := shown[i]
+		s.asset = &a
+		s.download(a)
+	}, s.win)
+	d.Resize(fyne.NewSize(600, 360))
+	d.Show()
+}
+
+// assetLabel is a release image as the lists show it.
+func (s *screen) assetLabel(a catalog.Asset) string {
+	text := a.Release + " - " + a.Name
+	if k, g, ok := catalog.Variant(a.Name); ok {
+		text = a.Release + " - " + s.variantText(k, g)
+		if catalog.Recommended(a.Name) {
+			text += " - " + s.t("recommended")
+		}
+	}
+	return text
 }
 
 // variantText names an image's kernel and graphics driver.
@@ -911,13 +718,19 @@ func (s *screen) variantText(kernel, gpu string) string {
 	}
 	return s.t("kernel %s, OpenGL ES only", kernel)
 }
+
 func (s *screen) download(a catalog.Asset) {
+	if s.busy {
+		return
+	}
+	s.logf("downloading %s", a.URL)
 	s.setBusy(true)
 	s.progress.Show()
 	s.progress.SetValue(0)
 	s.releaseLabel.SetText(s.t("downloading") + ": " + a.Name)
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
+	s.ready()
 	go func() {
 		dir, e := jobs.CacheDir()
 		var p string
@@ -935,10 +748,13 @@ func (s *screen) download(a catalog.Asset) {
 				return
 			}
 			if stopped {
-				s.releaseLabel.SetText(s.t("Choose a release to see its supported consoles and panels."))
+				s.logf("download stopped")
+				s.releaseLabel.SetText("")
 				return
 			}
 			if e != nil {
+				s.logf("download failed: %v", e)
+				s.releaseLabel.SetText("")
 				s.showError(e)
 				return
 			}
@@ -946,228 +762,10 @@ func (s *screen) download(a catalog.Asset) {
 		})
 	}()
 }
-func (s *screen) confirm() {
-	if s.im == nil || s.card == nil || s.drive == nil {
-		return
-	}
-	mode := "install"
-	if s.updating {
-		mode = "update"
-	}
-	// the game system is downloaded before the question, so that saying yes starts the write
-	if s.guestBytes() > 0 && s.guestReady == nil {
-		s.withGuest(func(g *flash.Guest) {
-			s.guestReady = g
-			s.confirm()
-			s.guestReady = nil
-		})
-		return
-	}
-	p, e := flash.BuildWith(s.im, *s.card, s.drive.Size, mode, s.profile, s.noROMs.Checked, s.userdataGiB, flash.Options{Guest: s.guestReady})
-	if e != nil {
-		s.showError(e)
-		return
-	}
-	msg := s.drive.Label() + "\n\n" + s.t("Everything currently on this card will be erased.")
-	title := s.t("Erase this card?")
-	if mode == "update" {
-		title = s.t("Update this card?")
-		msg = s.drive.Label() + "\n\n" + s.t("BOOT, system, and vendor will be updated together. The dedicated cache will be cleared. Userdata and games stay in place. A recovery backup will be saved before writing.")
-		if s.card.DataCard {
-			msg = s.t("This is the data card of an eMMC install. Updating it makes it bootable again, and the console will start from it instead of the eMMC.") + " " + s.t(dataCardFirstStart) + "\n\n" + msg
-		}
-	}
-	if s.convert {
-		msg += "\n\n" + s.t(ownDTBWarning)
-	} else if s.custom != "" {
-		msg += "\n\n" + s.t(firmware.CustomWarning)
-	}
-	if len(s.drive.Volumes) > 0 {
-		msg += "\n\n" + s.t("Drives of this card that are open on this computer (%s) are closed first.", strings.Join(s.drive.Volumes, ", "))
-	}
-	if mode == "update" && s.guestKept() != "" {
-		msg += "\n\n" + s.guestKept()
-	}
-	// a fixed disk: the plain question isn't enough
-	if s.drive.Fixed {
-		s.agreeDialog(s.t("Write to a disk that is not a removable card?"), s.t("%s is not a removable card. If it is the wrong disk, what is on it is destroyed and cannot be recovered. Check the name and the size once more before you go on.", s.drive.Label())+"\n\n"+msg, s.t("This is the right disk. Write to it."), func(ok bool) {
-			if ok {
-				s.writeWithDTBWarning(p)
-			}
-		})
-		return
-	}
-	// a large drive or a USB hard drive may be the user's backup disk: say its size
-	// and model, and have the user tick that it is the card
-	if s.drive.Large() {
-		size := fmt.Sprintf("%.0f GB", float64(s.drive.Size)/1e9)
-		s.agreeDialog(s.t("Is this really your SD card?"), s.t("%s (%s) is larger than most SD cards, or it says it is a hard drive. If it is not your SD card, everything on it is lost for good. Check the size and the name once more.", s.drive.Name, size)+"\n\n"+msg, s.t("This %s drive (%s) is my SD card. Write to it.", size, s.drive.Name), func(ok bool) {
-			if ok {
-				s.writeWithDTBWarning(p)
-			}
-		})
-		return
-	}
-	s.confirmDialog(title, msg, func(ok bool) {
-		if ok {
-			s.writeWithDTBWarning(p)
-		}
-	}, s.win)
-}
-func (s *screen) write(p *flash.Plan) {
-	// a write is not stopped halfway
-	s.cancel = nil
-	s.setBusy(true)
-	m := newDiskMap()
-	m.plan(p)
-	title := heading(s.t("Writing your andr36oid card"))
-	phase := wrapped(s.t("Preparing to write. Keep the card connected."))
-	phase.TextStyle = fyne.TextStyle{Bold: true}
-	outcome := wrapped("")
-	outcome.Hide()
-	bar := widget.NewProgressBar()
-	details := wrapped(s.t("Each block summarizes a region of the card. Preserved regions are never written."))
-	waitCtx, stopWaiting := context.WithCancel(context.Background())
-	waiting := wrapped("")
-	waiting.TextStyle = fyne.TextStyle{Bold: true}
-	waiting.Hide()
-	back := widget.NewButton(s.t("Back to setup"), func() {
-		stopWaiting()
-		s.win.SetContent(s.home)
-		s.card = nil
-		s.drive = nil
-		s.driveSelect.ClearSelected()
-		s.showStep(stepCard)
-		s.setBusy(false)
-		s.listDrives()
-	})
-	back.Disable()
-	back.Importance = widget.HighImportance
-	// after a new installation: the card stays mounted for AUTOAPK until this
-	drive := *s.drive
-	var eject *widget.Button
-	eject = widget.NewButton(s.t("Eject card"), func() {
-		eject.Disable()
-		go func() {
-			e := platform.Eject(drive)
-			fyne.Do(func() {
-				if e != nil {
-					eject.Enable()
-					details.SetText(s.t("Safely eject the card and insert it into the console’s system card slot. The first boot prepares storage and restarts the console. Keep it powered on until Android setup appears. If the screen stays blank, check the chosen board and panel profile."))
-					s.info(s.t("Eject card"), s.t("The card could not be ejected. Eject it with your computer’s own eject, then insert it into the console’s system card slot.")+"\n\n"+s.t("Technical details")+": "+e.Error(), s.win)
-					return
-				}
-				eject.Hide()
-				details.SetText(s.t("The card is ejected. Insert it into the console’s system card slot. The first boot prepares storage and restarts the console. Keep it powered on until Android setup appears. If the screen stays blank, check the chosen board and panel profile."))
-			})
-		}()
-	})
-	eject.Importance = widget.HighImportance
-	eject.Hide()
-	// after a failure: the report for a message to the developers
-	copyBox := container.NewHBox()
-	s.win.SetContent(container.NewPadded(container.NewBorder(container.NewVBox(title, widget.NewLabel(s.drive.Label()), widget.NewSeparator()), back, nil, nil,
-		container.NewVScroll(container.NewVBox(phase, bar, outcome, copyBox, m.img, legend(s.locale), details, eject, waiting)))))
-	req := jobs.Request{Action: "write", Drive: *s.drive, Image: s.im.Path, ImageHash: s.im.SHA256, CardFingerprint: s.card.Fingerprint, Mode: p.Mode, Profile: s.profile, NoROMs: p.NoROMs, UserdataGiB: p.UserdataGiB, CustomDTB: s.custom, CustomAccepted: s.customAccepted, ConvertDTB: s.convert, SystemImage: s.system, SystemAccepted: s.systemAccepted}
-	req.DTBFile = s.dtbFile
-	req.DTBManifest = s.dtbManifest
-	if s.bootloaderOptions != nil {
-		req.Bootloader = s.bootloaderOptions.selection()
-	}
-	req.ImageSource = s.im.Source
-	req.Guest = p.Guest
-	var speed *flash.CardSpeed
-	go func() {
-		result, e := jobs.Run(req, func(p flash.Progress) {
-			fyne.Do(func() {
-				if p.Speed != nil {
-					speed = p.Speed
-					return
-				}
-				m.update(p)
-				phase.SetText(s.t(p.Phase) + ": " + s.t(p.Name))
-				if p.Total > 0 {
-					bar.SetValue(float64(p.Done) / float64(p.Total))
-				}
-			})
-		})
-		fyne.Do(func() {
-			s.busy = false
-			back.Enable()
-			if detail, busy := busyError(e); busy {
-				// nothing was written yet: back to the setup, and the user closes what uses the card
-				s.win.SetContent(s.home)
-				s.setBusy(false)
-				s.ask(s.t("The card is in use"), s.t("The card can’t be written while it is open on this computer (%s). Close any windows or programs that show files from the card, or eject its drives, then try again.", detail), s.t("Try again"), func(ok bool) {
-					if ok {
-						s.write(p)
-					}
-				})
-				return
-			}
-			if e != nil {
-				title.SetText(s.t("Operation could not finish"))
-				phase.SetText(s.explain(e))
-				outcome.SetText(s.t("Technical details") + ": " + e.Error() + s.failureHints(e))
-				outcome.Importance = widget.DangerImportance
-				outcome.Show()
-				copyBox.Add(s.copyDetails(e))
-				if result.Backup != "" {
-					details.SetText(s.t("Recovery backups") + ": " + result.Backup)
-				}
-				return
-			}
-			bar.SetValue(1)
-			title.SetText(s.t("Written and verified"))
-			phase.SetText(s.t("Your card has been written and verified."))
-			if speed != nil && speed.WriteMBps > 0 {
-				outcome.SetText(s.t("Card speed: %.0f MB/s writing, %.1f ms per small read, %.1f ms per small write", speed.WriteMBps, speed.ReadLatency, speed.WriteLatency))
-				if speed.Slow {
-					outcome.SetText(s.t("This card is slow. Android runs from the card, so apps may start slowly and games may stutter. For a smooth experience, use a card from a known brand marked A1 or A2.") + "\n" + outcome.Text)
-					outcome.Importance = widget.WarningImportance
-				}
-				outcome.Show()
-			}
-			if result.Bootloader != nil {
-				line := s.bootloaderSummary(result.Bootloader.Record)
-				if result.Bootloader.Warning != "" {
-					line = s.t(result.Bootloader.Warning) + "\n" + line
-					outcome.Importance = widget.WarningImportance
-				}
-				if outcome.Text != "" {
-					line = outcome.Text + "\n" + line
-				}
-				outcome.SetText(line)
-				outcome.Show()
-			}
-			if p.Mode == "install" {
-				text := s.t(firstBootSteps)
-				if p.Prepared && !p.NoROMs {
-					text = s.t("The games drive (EASYROMS) is ready: you can copy games to it now, before the first start.") + "\n\n" + text
-				}
-				text += "\n\n" + s.t("Want to add your own apps? Copy APK files to the AUTOAPK drive now, and the console offers them during setup.")
-				details.SetText(text)
-				eject.Show()
-				// fixes for this build are offered when the card is back from its first setup
-				identity := s.im.BuildIdentity
-				s.awaitFirstBoot(waitCtx, drive, identity, waiting, func(d platform.Drive) {
-					s.offerKernelUpdate(d, identity, func() { s.offerHotfixes(d, identity) })
-				})
-				return
-			} else {
-				details.SetText(s.t("Your card has been written and verified. Apps, settings, saves, and games were preserved.") + "\n" + s.t("Recovery backups") + ": " + result.Backup)
-			}
-			s.offerKernelUpdate(drive, s.im.BuildIdentity, func() { s.offerHotfixes(drive, s.im.BuildIdentity) })
-		})
-	}()
-}
 
-func (s *screen) recover() {
+// restoreBackup brings back the system an interrupted update saved, on drive.
+func (s *screen) restoreBackup(drive platform.Drive) {
 	if s.busy {
-		return
-	}
-	if s.drive == nil {
-		s.info(s.t("Choose a card"), s.t("Select the card that was being updated first."), s.win)
 		return
 	}
 	d := dialog.NewFileOpen(func(r fyne.URIReadCloser, e error) {
@@ -1184,23 +782,26 @@ func (s *screen) recover() {
 			s.showError(fmt.Errorf("%s", s.t("Choose the recovery.json file saved by the interrupted update.")))
 			return
 		}
-		drive := *s.drive
-		s.confirmDialog(s.t("Restore previous installation"), drive.Label()+"\n\n"+s.t("Restore the saved operating system? Userdata and games remain protected."), func(ok bool) {
+		s.confirmDialog(s.t("Restore previous installation"), s.driveTitle(drive)+"\n\n"+s.t("Restore the saved operating system? Userdata and games remain protected."), func(ok bool) {
 			if !ok {
 				return
 			}
 			s.setBusy(true)
-			s.cardLabel.SetText(s.t("Verifying and restoring the recovery backup…"))
+			status := wrapped(s.t("Verifying and restoring the recovery backup..."))
+			bar := widget.NewProgressBarInfinite()
+			s.show(pageView(title(s.t("Restore previous installation")), wrapped(s.driveTitle(drive)), container.NewVBox(status, bar), nil))
+			s.logf("restoring %s on %s", file, drive.Path)
 			go func() {
 				_, e := jobs.Run(jobs.Request{Action: "restore", Drive: drive, Recovery: filepath.Dir(file)}, nil)
 				fyne.Do(func() {
 					s.setBusy(false)
+					s.showFix()
 					if e != nil {
+						s.logf("restore failed: %v", e)
 						s.showError(e)
 					} else {
 						s.info(s.t("Restored"), s.t("The previous installation was restored and verified."), s.win)
 					}
-					s.listDrives()
 				})
 			}()
 		}, s.win)

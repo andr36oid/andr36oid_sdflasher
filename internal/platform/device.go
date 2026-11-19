@@ -25,6 +25,20 @@ type Drive struct {
 	// External: a USB disk that says it is a fixed or hard disk rather than a card
 	// in a reader (a USB hard drive or SSD).
 	External bool `json:"external,omitempty"`
+	// Labels: the partition names the listing could read without administrator
+	// rights (Linux only; empty elsewhere). Only shown, never trusted for a write.
+	Labels []string `json:"labels,omitempty"`
+}
+
+// LooksLikeAndr36oid: the listing's partition names are those of an andr36oid
+// card. A hint for the app, read without administrator rights; the card is still
+// inspected before anything is written.
+func (d Drive) LooksLikeAndr36oid() bool {
+	has := map[string]bool{}
+	for _, l := range d.Labels {
+		has[l] = true
+	}
+	return has["BOOT"] && has["system"] && has["userdata"]
 }
 
 // WriteProtectedReason is why a write-protected card can't be chosen (an en.json
@@ -77,7 +91,7 @@ func Busy(msg string) (string, bool) {
 }
 
 func (d Drive) Label() string {
-	return fmt.Sprintf("%s · %.1f GB · %s", d.Name, float64(d.Size)/1e9, d.Path)
+	return fmt.Sprintf("%s - %.1f GB - %s", d.Name, float64(d.Size)/1e9, d.Path)
 }
 
 // Same reports whether two listings describe the same card.

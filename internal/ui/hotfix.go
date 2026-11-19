@@ -7,7 +7,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
@@ -15,63 +14,20 @@ import (
 	"github.com/andr36oid/andr36oid-sdflasher/internal/platform"
 )
 
-// Standalone card selection deliberately does not depend on loading an image.
-func (s *screen) chooseHotfixCard() {
-	if s.busy {
-		return
-	}
-	s.setBusy(true)
-	go func() {
-		list := platform.List
-		if s.allDrives {
-			list = platform.ListAll
-		}
-		drives, err := list()
-		fyne.Do(func() {
-			s.setBusy(false)
-			if err != nil {
-				s.showError(err)
-				return
-			}
-			s.pickHotfixCard(drives)
-		})
-	}()
-}
-
-func (s *screen) pickHotfixCard(drives []platform.Drive) {
-	labels := []string{}
-	for _, d := range drives {
-		labels = append(labels, s.driveLabel(d))
-	}
-	if len(labels) == 0 {
-		s.info(s.t("Apply hotfixes"), s.t("No removable cards found. Insert a card and refresh."), s.win)
-		return
-	}
-	pick := widget.NewSelect(labels, nil)
-	pick.PlaceHolder = s.t("Select a microSD card")
-	dialog.ShowCustomConfirm(s.t("Apply hotfixes"), s.t("Continue"), s.t("Cancel"), container.NewVBox(wrapped(s.t("Choose an existing andr36oid card. Only BOOT/hotfix will be updated.")), pick), func(ok bool) {
-		if ok && pick.SelectedIndex() >= 0 {
-			s.offerHotfixes(drives[pick.SelectedIndex()], "")
-		}
-	}, s.win)
-}
-
 func (s *screen) offerHotfixes(drive platform.Drive, expected string) {
-	previous := s.win.Content()
+	previous := s.current()
 	ctx, cancel := context.WithCancel(context.Background())
 	s.setBusy(true)
 	status := wrapped(s.t("Checking for hotfixes"))
 	bar := widget.NewProgressBar()
 	items := container.NewVBox()
-	skip := widget.NewButton(s.t("Skip hotfixes"), func() { cancel(); s.win.SetContent(previous); s.setBusy(false) })
+	skip := widget.NewButton(s.t("Skip hotfixes"), func() { cancel(); s.show(previous); s.setBusy(false) })
 	apply := widget.NewButton(s.t("Apply selected hotfixes"), nil)
 	apply.Disable()
 	apply.Importance = widget.HighImportance
-	retry := widget.NewButton(s.t("Try again"), func() { s.win.SetContent(previous); s.setBusy(false); s.offerHotfixes(drive, expected) })
+	retry := widget.NewButton(s.t("Try again"), func() { s.show(previous); s.setBusy(false); s.offerHotfixes(drive, expected) })
 	retry.Hide()
-	s.win.SetContent(container.NewPadded(container.NewBorder(
-		container.NewVBox(heading(s.t("Apply hotfixes")), wrapped(drive.Label()), status, bar),
-		container.NewHBox(skip, apply, retry), nil, nil, container.NewVScroll(items))))
+	s.leave(pageView(title(s.t("Apply hotfixes")), wrapped(s.driveTitle(drive)), container.NewVBox(status, bar, items), nil, skip, retry, apply))
 	go func() {
 		result, e := jobs.Run(jobs.Request{Action: "hotfix-list", Drive: drive}, nil)
 		var offer *firmware.HotfixOffer
@@ -129,7 +85,7 @@ func (s *screen) offerHotfixes(drive platform.Drive, expected string) {
 				go func() {
 					result, err := jobs.Run(jobs.Request{Action: "hotfix-apply", Drive: drive, HotfixOffer: offer, HotfixFiles: selected}, func(p flash.Progress) {
 						fyne.Do(func() {
-							status.SetText(s.t(p.Phase) + ": " + p.Name)
+							status.SetText(s.t(p.Name))
 							if p.Total > 0 {
 								bar.SetValue(float64(p.Done) / float64(p.Total))
 							}
@@ -176,4 +132,50 @@ func (s *screen) hotfixChecklist(offer *firmware.HotfixOffer) (*fyne.Container, 
 		items.Add(container.NewVBox(check, wrapped(description), wrapped(s.t("Size: %.1f MiB", float64(h.Size)/(1<<20))), widget.NewSeparator()))
 	}
 	return items, checks
+}
+
+// lookupFixes counts, once per release, the bug fixes published for its build;
+// the options page offers them.
+func (s *screen) lookupFixes() {
+	if !s.started || s.im == nil || s.fixesFor == s.im.BuildIdentity {
+		return
+	}
+	build := s.im.BuildIdentity
+	s.fixesFor, s.fixCount = build, -1
+	go func() {
+		n := -1
+		index, e := firmware.FetchHotfixIndex(context.Background(), firmware.HotfixIndexURL)
+		if e == nil {
+			n = 0
+			for _, h := range index.ForBuild(build).Hotfixes {
+				if h.Preselected() {
+					n++
+				}
+			}
+		}
+		fyne.Do(func() {
+			if s.fixesFor == build {
+				s.fixCount = n
+				s.ready()
+			}
+		})
+	}()
+}
+
+// refreshFixes shows the bug fix box when there are fixes for the release.
+func (s *screen) refreshFixes() {
+	if s.fixBox == nil {
+		return
+	}
+	if s.fixCount <= 0 {
+		s.fixBox.Hide()
+		return
+	}
+	s.fixLabel.SetText(s.t("Bug fixes for this release (%d)", s.fixCount))
+	text := s.t("They are offered once the console has finished its first start from the card; you choose which ones then.")
+	if s.updating {
+		text = s.t("They are offered right after the update; you choose which ones then.")
+	}
+	s.fixInfo.SetText(text)
+	s.fixBox.Show()
 }

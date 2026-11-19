@@ -29,15 +29,19 @@ func fixScreen(t *testing.T) *screen {
 // inspects (or writes) it.
 func TestWriteProtectedCardListed(t *testing.T) {
 	s := fixScreen(t)
-	s.drives = []platform.Drive{{Path: "/dev/sdx", Name: "Card Reader", Size: 32e9, WriteProtected: true}}
-	s.populateDrives(true)
+	s.setDrives([]platform.Drive{{Path: "/dev/sdx", Name: "Card Reader", Size: 32e9, WriteProtected: true}})
 	label := s.driveLabel(s.drives[0])
-	if !strings.Contains(label, "write-protected: slide the lock switch on the card or adapter") || len(s.driveSelect.Options) != 1 {
-		t.Fatal(label, s.driveSelect.Options)
+	if !strings.Contains(label, "write-protected: slide the lock switch on the card or adapter") || len(s.cardRows.Objects) != 1 {
+		t.Fatal(label, len(s.cardRows.Objects))
 	}
-	s.driveSelect.SetSelected(label)
-	if s.drive != nil || s.busy || !strings.Contains(s.cardLabel.Text, "lock switch") {
-		t.Fatalf("drive %v busy %v: %q", s.drive, s.busy, s.cardLabel.Text)
+	row := s.cardRows.Objects[0].(*choiceCard)
+	if !row.disabled || !strings.Contains(row.detail.Text, "lock switch") {
+		t.Fatalf("row %v %q", row.disabled, row.detail.Text)
+	}
+	row.Tapped(nil)
+	s.pickDrive(s.drives[0])
+	if s.drive != nil || s.busy {
+		t.Fatalf("drive %v busy %v", s.drive, s.busy)
 	}
 }
 
@@ -53,7 +57,7 @@ func TestGuestReasons(t *testing.T) {
 	s.guestChosen = true
 	s.refreshGuest()
 	got := strings.Join(s.guestRadio.Options, "|")
-	for _, want := range []string{"dArkOS · no release yet", "dArkOSRE · needs a newer flasher", "dArkOSen · not available right now"} {
+	for _, want := range []string{"dArkOS - no release yet", "dArkOSRE - needs a newer flasher", "dArkOSen - not available right now"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("%q not in %q", want, got)
 		}
@@ -71,9 +75,8 @@ func TestGuestReasons(t *testing.T) {
 func TestUpdateShowsKeptGuest(t *testing.T) {
 	s := fixScreen(t)
 	s.card = &flash.Card{Installed: true, Guest: &flash.CardGuest{Distribution: "dArkOS", Version: "11072026"}}
-	s.mode.SetSelected(s.t("Update an existing installation"))
-	s.ready()
-	if !s.guestBox.Visible() || s.guestRadio.Visible() || s.guestInfo.Text != "This card has dArkOS (11072026) on it. The update keeps it as it is." {
+	s.setTask(taskUpdate)
+	if !s.guestBox.Visible() || s.guestCheckRow.Visible() || s.guestInfo.Text != "This card has dArkOS (11072026) on it. The update keeps it as it is." {
 		t.Fatalf("box %v radio %v %q", s.guestBox.Visible(), s.guestRadio.Visible(), s.guestInfo.Text)
 	}
 	s.card.Guest = nil

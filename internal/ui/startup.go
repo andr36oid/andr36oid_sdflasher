@@ -47,12 +47,15 @@ func (s *screen) showCardAdvice() {
 		s.start()
 	})
 	agree.Importance = widget.HighImportance
-	s.win.SetContent(container.NewPadded(container.NewBorder(
-		container.NewBorder(nil, nil, nil, s.language, widget.NewLabelWithStyle("andr36oid SD Flasher", 0, fyne.TextStyle{Bold: true})),
-		container.NewVBox(agree, widget.NewButton(s.t("Quit"), s.win.Close)), nil, nil, container.NewVScroll(body))))
+	s.win.SetPadded(false)
+	s.win.SetContent(container.New(atLeast{fyne.NewSize(900, 620)}, container.NewPadded(pageView(heading("andr36oid SD Flasher"), nil, body, nil,
+		s.language, widget.NewButton(s.t("Quit"), s.win.Close), agree))))
 }
 
 func (s *screen) renderAppUpdate() {
+	if s.updateBanner == nil {
+		return
+	}
 	if s.update == nil {
 		s.updateBanner.Hide()
 		return
@@ -67,7 +70,8 @@ func (s *screen) renderAppUpdate() {
 		s.update = nil
 		s.renderAppUpdate()
 	})
-	s.updateBanner.Objects = []fyne.CanvasObject{container.NewBorder(nil, nil, nil, container.NewHBox(download, dismiss), wrapped(s.t("Flasher %s is available", s.update.Version)))}
+	download.Importance = widget.HighImportance
+	s.updateBanner.Objects = []fyne.CanvasObject{noteCard(notePlain, wrapped(s.t("Flasher %s is available", s.update.Version)), download, dismiss)}
 	s.updateBanner.Show()
 	s.updateBanner.Refresh()
 }

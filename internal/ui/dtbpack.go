@@ -33,38 +33,9 @@ func hasNetwork() bool {
 	}
 	return false
 }
-func (s *screen) chooseDTBPackCard() {
-	if s.busy {
-		return
-	}
-	s.setBusy(true)
-	go func() {
-		list := platform.List
-		if s.allDrives {
-			list = platform.ListAll
-		}
-		drives, e := list()
-		fyne.Do(func() {
-			s.setBusy(false)
-			if e != nil {
-				s.dtbInfo(s.t("Update device trees"), s.t(e.Error()), s.win)
-				return
-			}
-			s.pickDTBPackCard(drives)
-		})
-	}()
-}
-func (s *screen) pickDTBPackCard(drives []platform.Drive) {
-	if len(drives) == 0 {
-		s.dtbInfo(s.t("Update device trees"), s.t("No removable cards found. Insert a card and refresh."), s.win)
-		return
-	}
-	labels := []string{}
-	for _, d := range drives {
-		labels = append(labels, s.driveLabel(d))
-	}
-	pick := widget.NewSelect(labels, nil)
-	pick.PlaceHolder = s.t("Select a microSD card")
+
+// dtbPackPage is the device tree update of one card: where the set comes from.
+func (s *screen) dtbPackPage(drive platform.Drive) {
 	source := widget.NewRadioGroup([]string{s.t(dtbOnline), s.t(dtbOffline)}, nil)
 	source.Required = true
 	if hasNetwork() {
@@ -75,16 +46,10 @@ func (s *screen) pickDTBPackCard(drives []platform.Drive) {
 	file := ""
 	var info jobs.Result
 	var continueButton *widget.Button
-	var popup *dialog.CustomDialog
-	generation := 0
-	closed := false
 	fileLabel := wrapped("")
-	status := wrapped("")
+	status := wrapped(s.t("Working..."))
 	ready := func() {
-		if continueButton == nil {
-			return
-		}
-		if !s.busy && info.Card != nil && pick.SelectedIndex() >= 0 && (source.Selected != s.t(dtbOffline) || file != "") {
+		if !s.busy && info.Card != nil && (source.Selected != s.t(dtbOffline) || file != "") {
 			continueButton.Enable()
 		} else {
 			continueButton.Disable()
@@ -109,52 +74,16 @@ func (s *screen) pickDTBPackCard(drives []platform.Drive) {
 		d.Show()
 	})
 	source.OnChanged = func(string) { ready() }
-	pick.OnChanged = func(string) {
-		generation++
-		token := generation
-		info = jobs.Result{}
-		ready()
-		s.setBusy(true)
-		status.SetText(s.t("Working…"))
-		drive := drives[pick.SelectedIndex()]
-		go func() {
-			result, e := jobs.Run(jobs.Request{Action: "dtb-info", Drive: drive}, nil)
-			fyne.Do(func() {
-				if closed || token != generation {
-					return
-				}
-				s.setBusy(false)
-				if e != nil {
-					status.SetText(s.t(firmware.DTBPackNoBuild))
-					ready()
-					return
-				}
-				info = result
-				status.SetText(result.BuildIdentity)
-				opts := []string{s.t(dtbOnline), s.t(dtbOffline)}
-				if result.Setup != nil && len(result.Setup.History) > 0 {
-					opts = append(opts, s.t(dtbRestore))
-				}
-				source.Options = opts
-				source.Refresh()
-				ready()
-			})
-		}()
-	}
-	cancel := widget.NewButton(s.t("Cancel"), func() {
-		if s.busy {
-			return
+	back := widget.NewButton(s.t("Back"), func() {
+		if !s.busy {
+			s.showFix()
 		}
-		closed = true
-		popup.Hide()
 	})
 	continueButton = widget.NewButton(s.t("Continue"), func() {
 		if s.busy || info.Card == nil {
 			return
 		}
-		closed = true
-		popup.Hide()
-		req := jobs.Request{Action: "dtb-plan", Drive: drives[pick.SelectedIndex()], DTBFile: file, DTBOnline: source.Selected == s.t(dtbOnline), DTBExpected: info.BuildIdentity, CardFingerprint: info.Card.Fingerprint}
+		req := jobs.Request{Action: "dtb-plan", Drive: drive, DTBFile: file, DTBOnline: source.Selected == s.t(dtbOnline), DTBExpected: info.BuildIdentity, CardFingerprint: info.Card.Fingerprint}
 		if source.Selected == s.t(dtbRestore) {
 			req.Action = "dtb-restore-plan"
 			s.previewDTBRestore(req)
@@ -164,8 +93,28 @@ func (s *screen) pickDTBPackCard(drives []platform.Drive) {
 	})
 	continueButton.Importance = widget.HighImportance
 	continueButton.Disable()
-	popup = dialog.NewCustomWithoutButtons(s.t("Update device trees"), container.NewVBox(wrapped(s.t(dtbIntro)), widget.NewForm(widget.NewFormItem(s.t("Card"), pick)), source, choose, fileLabel, status, container.NewHBox(cancel, continueButton)), s.win)
-	popup.Show()
+	s.leave(pageView(title(s.t("Update device trees")), wrapped(s.driveTitle(drive)), container.NewVBox(wrapped(s.t(dtbIntro)), source, container.NewHBox(choose), fileLabel, status), nil, back, continueButton))
+	s.setBusy(true)
+	go func() {
+		result, e := jobs.Run(jobs.Request{Action: "dtb-info", Drive: drive}, nil)
+		fyne.Do(func() {
+			s.setBusy(false)
+			if e != nil {
+				status.SetText(s.t(firmware.DTBPackNoBuild))
+				ready()
+				return
+			}
+			info = result
+			status.SetText(result.BuildIdentity)
+			opts := []string{s.t(dtbOnline), s.t(dtbOffline)}
+			if result.Setup != nil && len(result.Setup.History) > 0 {
+				opts = append(opts, s.t(dtbRestore))
+			}
+			source.Options = opts
+			source.Refresh()
+			ready()
+		})
+	}()
 }
 func (s *screen) previewDTBRequest(req jobs.Request) {
 	if s.busy {
@@ -232,7 +181,7 @@ func (s *screen) previewDTBRequest(req jobs.Request) {
 					apply()
 				}
 			})
-			popup = dialog.NewCustomWithoutButtons(s.t("Device trees for %s", pack.Manifest.Version)+fmt.Sprintf(" · r%d", pack.Manifest.Revision), container.NewVBox(body, container.NewHBox(widget.NewButton(s.t("Cancel"), func() { popup.Hide() }), button)), s.win)
+			popup = dialog.NewCustomWithoutButtons(s.t("Device trees for %s", pack.Manifest.Version)+fmt.Sprintf(" - r%d", pack.Manifest.Revision), container.NewVBox(body, container.NewHBox(widget.NewButton(s.t("Cancel"), func() { popup.Hide() }), button)), s.win)
 			popup.Show()
 		})
 	}()
@@ -242,9 +191,9 @@ func (s *screen) writeDTBRequest(req jobs.Request, restore bool, plan *firmware.
 		return
 	}
 	s.setBusy(true)
-	previous := s.win.Content()
+	previous := s.current()
 	bar := widget.NewProgressBar()
-	s.win.SetContent(container.NewPadded(container.NewVBox(heading(s.t("Update device trees")), wrapped(s.t("Writing device trees...")), bar)))
+	s.show(pageView(title(s.t("Update device trees")), wrapped(s.t("Writing device trees...")), bar, nil))
 	go func() {
 		result, e := jobs.Run(req, func(p flash.Progress) {
 			if p.Total > 0 {
@@ -254,7 +203,7 @@ func (s *screen) writeDTBRequest(req jobs.Request, restore bool, plan *firmware.
 		fyne.Do(func() {
 			bar.SetValue(1)
 			s.setBusy(false)
-			s.win.SetContent(previous)
+			s.show(previous)
 			if e != nil {
 				if strings.Contains(e.Error(), firmware.ErrDTBRollback.Error()) {
 					s.dtbInfo(s.t("Update device trees"), s.t(e.Error()), s.win)
@@ -282,7 +231,7 @@ func (s *screen) writeDTBRequest(req jobs.Request, restore bool, plan *firmware.
 	}()
 }
 func (s *screen) imageDTBSection() *fyne.Container {
-	s.dtbLabel = wrapped("")
+	s.dtbLabel = wrapped(s.t("Device trees as in the release"))
 	if s.im != nil && s.im.DTBVersion != "" {
 		s.dtbLabel.SetText(s.t("Using device trees from %s", s.im.DTBVersion))
 	}
@@ -486,19 +435,4 @@ func (s *screen) dtbInfo(title, message string, parent fyne.Window) {
 	d := dialog.NewCustom(title, s.t("Close"), wrapped(message), parent)
 	fitDialog(d, message, parent)
 	d.Show()
-}
-func (s *screen) writeWithDTBWarning(p *flash.Plan) {
-	if s.bootloaderOptions != nil && !s.bootloaderOptions.accepted {
-		s.bootloaderOptions.confirm(func() { s.writeWithDTBWarning(p) })
-		return
-	}
-	if s.im != nil && s.im.DTBPack != nil && s.custom == "" {
-		for _, profile := range s.im.Profiles {
-			if profile.ID == s.profile && profile.DTBScreenChanged {
-				s.confirmDTBScreen(&firmware.DTBPlan{ScreenChanged: true}, func() { s.write(p) })
-				return
-			}
-		}
-	}
-	s.write(p)
 }

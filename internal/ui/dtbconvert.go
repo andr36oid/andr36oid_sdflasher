@@ -16,7 +16,7 @@ import (
 
 // Texts of the "use my console's own DTB" option. They are i18n keys.
 const (
-	ownDTBButton  = "Use my console’s own DTB file…"
+	ownDTBButton  = "Use my console’s own DTB file..."
 	ownDTBTitle   = "Your console’s own DTB"
 	ownDTBExplain = "Choose the DTB file from your console’s original ArkOS, dArkOS or EmuELEC card. It is in the BOOT partition, often named rk3326-r36s-linux.dtb. The flasher turns it into an andr36oid DTB: it copies your console’s screen, buttons, battery and other board details into the andr36oid DTB of the same board family. Your file and the files it replaces are kept in the andr36oid-dtb-backup folder on BOOT."
 	ownDTBRefused = "This DTB can’t be converted"
@@ -94,7 +94,7 @@ func (s *screen) showConversion(p string, c *firmware.Conversion) {
 		wrapped(s.t(ownDTBWarning)),
 	}
 	if len(c.Warnings) > 0 {
-		parts = append(parts, widget.NewLabelWithStyle(s.t(ownDTBCheck), 0, fyne.TextStyle{Bold: true}), wrapped("• "+strings.Join(c.Warnings, "\n• ")))
+		parts = append(parts, widget.NewLabelWithStyle(s.t(ownDTBCheck), 0, fyne.TextStyle{Bold: true}), wrapped("- "+strings.Join(c.Warnings, "\n- ")))
 	}
 	report := widget.NewLabel(c.Report())
 	report.Wrapping = fyne.TextWrapWord

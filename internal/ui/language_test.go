@@ -26,7 +26,7 @@ func TestLanguageChangePreservesSetup(t *testing.T) {
 	defer w.Close()
 	w.Resize(fyne.NewSize(820, 760))
 	drive := platform.Drive{Path: "test-card", Size: 32 << 30}
-	s := &screen{win: w, locale: "en", im: &firmware.Image{Version: "test", Profiles: []firmware.Profile{{ID: "r36s", Name: "R36S · Panel 4", Console: "R36S"}}}, profile: "r36s", drive: &drive, drives: []platform.Drive{drive}, card: &flash.Card{Installed: true, Treble: true, Profile: "r36s", NoROMs: true}, updating: true, custom: "example.dtb", customAccepted: true}
+	s := &screen{win: w, locale: "en", im: &firmware.Image{Version: "test", Profiles: []firmware.Profile{{ID: "r36s", Name: "R36S - Panel 4", Console: "R36S"}}}, profile: "r36s", drive: &drive, drives: []platform.Drive{drive}, card: &flash.Card{Installed: true, Treble: true, Profile: "r36s", NoROMs: true}, task: taskUpdate, updating: true, custom: "example.dtb", customAccepted: true}
 	for _, l := range i18n.Languages {
 		s.locale = l.Code
 		s.localizeDialogs()
@@ -34,8 +34,8 @@ func TestLanguageChangePreservesSetup(t *testing.T) {
 		if !s.updating || s.profile != "r36s" || s.drive == nil || !s.noROMs.Checked || s.custom != "example.dtb" || !s.customAccepted {
 			t.Fatalf("%s: lost setup state", l.Code)
 		}
-		if s.mode.Selected != s.t("Update an existing installation") || s.action.Disabled() {
-			t.Fatalf("%s: mode changed or continue disabled", l.Code)
+		if s.task != taskUpdate || s.action.Disabled() {
+			t.Fatalf("%s: task changed or write disabled", l.Code)
 		}
 		if lang.L("Cancel") != s.t("Cancel") {
 			t.Fatalf("%s: file dialog not translated", l.Code)

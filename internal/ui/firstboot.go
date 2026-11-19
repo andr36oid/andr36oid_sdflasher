@@ -36,7 +36,7 @@ func (s *screen) awaitFirstBoot(ctx context.Context, card platform.Drive, expect
 		})
 	}
 	go func() {
-		say(s.t("Waiting for the card to come back from the console…"))
+		say(s.t("Waiting for the card to come back from the console..."))
 		present, looked := true, true
 		for {
 			select {
@@ -68,7 +68,7 @@ func (s *screen) awaitFirstBoot(ctx context.Context, card platform.Drive, expect
 			}
 			switch {
 			case e != nil || result.BuildIdentity != expected:
-				say(s.t("This is not the card that was just written. Waiting for that card…"))
+				say(s.t("This is not the card that was just written. Waiting for that card..."))
 			case result.FirstBoot != nil && result.FirstBoot.Done:
 				d := *found
 				fyne.Do(func() {

@@ -14,7 +14,7 @@ import (
 // The advanced option to write a different system image (a GSI) instead of the andr36oid one.
 func (s *screen) systemSection() fyne.CanvasObject {
 	s.systemLabel = wrapped(s.systemText())
-	choose := widget.NewButton(s.t("Choose system image…"), s.chooseSystem)
+	choose := widget.NewButton(s.t("Choose system image..."), s.chooseSystem)
 	clear := widget.NewButton(s.t("Use the andr36oid system"), func() {
 		s.system = ""
 		s.systemAccepted = false

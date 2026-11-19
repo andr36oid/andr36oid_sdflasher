@@ -352,8 +352,8 @@ public final class MainActivity extends Activity {
             "Download a release, or choose an image file you already have. Only Treble images can"
                 + " be installed."),
         false);
-    button("Download a release…", v -> releases());
-    button("Choose image from disk…", v -> pick(1));
+    button("Download a release...", v -> releases());
+    button("Choose image from disk...", v -> pick(1));
     imageLabel = label("", false);
 
     section(1);
@@ -380,14 +380,14 @@ public final class MainActivity extends Activity {
                     + " can require different DTBs."));
     label(t("DTB"), true);
     customLabel = label("", false);
-    button("Use my console’s own DTB file…", v -> chooseOwnDTB());
+    button("Use my console’s own DTB file...", v -> chooseOwnDTB());
     button(
         "Advanced: custom DTB",
         v ->
             new AlertDialog.Builder(this)
                 .setTitle(t("Custom Android DTB"))
                 .setMessage(t(Mobile.customWarning()))
-                .setPositiveButton(t("Choose custom Android DTB…"), (d, w) -> pick(2))
+                .setPositiveButton(t("Choose custom Android DTB..."), (d, w) -> pick(2))
                 .setNegativeButton(
                     t("Use shipped DTB"),
                     (d, w) -> {
@@ -503,7 +503,7 @@ public final class MainActivity extends Activity {
             new AlertDialog.Builder(this)
                 .setTitle(t("Advanced: different system image (GSI)"))
                 .setMessage(t(Mobile.gsiWarning()))
-                .setPositiveButton(t("Choose system image…"), (d, w) -> pick(4))
+                .setPositiveButton(t("Choose system image..."), (d, w) -> pick(4))
                 .setNegativeButton(
                     t("Use the andr36oid system"),
                     (d, w) -> {
@@ -516,10 +516,10 @@ public final class MainActivity extends Activity {
     label(t("Check and write"), true);
     summary = label("", false);
     help = label("", false);
-    action = button("Erase and write this card…", v -> review());
+    action = button("Erase and write this card...", v -> review());
     map = new DiskMap(this);
     target.addView(map, new LinearLayout.LayoutParams(-1, dp(160)));
-    mapLegend = label(t("Pending · Writing · Written · Verified · Preserved"), false);
+    mapLegend = label(t("Pending - Writing - Written - Verified - Preserved"), false);
 
     target = body;
     progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -544,7 +544,7 @@ public final class MainActivity extends Activity {
     back.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
     next.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
     target = body;
-    quiet(button("Restore an interrupted update…", v -> recover()));
+    quiet(button("Restore an interrupted update...", v -> recover()));
     quiet(button("Update device trees",v->{if(WorkState.busy)return;WorkState.choosingDTBCard=true;readers();}));
     quiet(button("Boot options", v -> { if(WorkState.busy)return; WorkState.choosingBootloaderCard=true; readers(); }));
     quiet(
@@ -665,7 +665,7 @@ public final class MainActivity extends Activity {
                     ? t(
                         WorkState.card.optBoolean("treble")
                             ? "Treble installation"
-                            : "Legacy andr36oid — will migrate to Treble")
+                            : "Legacy andr36oid - will migrate to Treble")
                     : t("New installation required"));
     boolean modeChanged =
         install.isChecked() == WorkState.update
@@ -743,7 +743,7 @@ public final class MainActivity extends Activity {
                     + " saved before writing.")
             : t("Everything currently on this card will be erased."));
     help.setTextColor(WorkState.update ? getColor(R.color.body_text) : danger);
-    action.setText(t(WorkState.update ? "Update this card…" : "Erase and write this card…"));
+    action.setText(t(WorkState.update ? "Update this card..." : "Erase and write this card..."));
     JSONObject p = WorkState.progress;
     String phase = p == null ? "" : p.optString("phase");
     int stall = WorkState.stall;
@@ -762,7 +762,7 @@ public final class MainActivity extends Activity {
                         + " unplug the reader: the operation then stops with an error and you"
                         + " can try again, or use the flasher for Windows, macOS or Linux.",
                     stall)
-                : t(busy ? (phase.isEmpty() ? "Working…" : phase) : WorkState.message)
+                : t(busy ? (phase.isEmpty() ? "Working..." : phase) : WorkState.message)
                     + (busy && p != null && p.has("name") ? ": " + t(p.optString("name")) : ""));
     status.setTextColor(
         busy && stall > 0
@@ -962,10 +962,10 @@ public final class MainActivity extends Activity {
             "Nobody on the andr36oid team has tested this device tree on real hardware. It can"
                 + " leave the screen black or the buttons dead, and in the worst case put a wrong"
                 + " voltage on part of the board.\n\nSupport for experimental device trees is very"
-                + " limited. If something doesn't work:\n• Report it only in the clone issue"
-                + " tracker: %s\n• Attach all the boot files from a system that works on your"
+                + " limited. If something doesn't work:\n- Report it only in the clone issue"
+                + " tracker: %s\n- Attach all the boot files from a system that works on your"
                 + " console, for example from the SD card it came with: every .dtb file and the"
-                + " other files at the top of its first drive.\n• Answer every question in the"
+                + " other files at the top of its first drive.\n- Answer every question in the"
                 + " issue form.\n\nReports without those files will be closed.",
             tracker));
     body.setTextColor(android.graphics.Color.rgb(0xE5, 0x39, 0x35));
@@ -1193,7 +1193,7 @@ public final class MainActivity extends Activity {
     JSONArray warnings = c.optJSONArray("warnings");
     if (warnings != null && warnings.length() > 0) {
       text.append("\n\n").append(t("Please check")).append(":");
-      for (int n = 0; n < warnings.length(); n++) text.append("\n• ").append(warnings.optString(n));
+      for (int n = 0; n < warnings.length(); n++) text.append("\n- ").append(warnings.optString(n));
     }
     String path = WorkState.conversionPath;
     new AlertDialog.Builder(this)
@@ -1810,7 +1810,7 @@ public final class MainActivity extends Activity {
         label += " · " + t("not available right now");
         text = t("This system can't be downloaded right now. Choose another one, or none.");
       } else if (offer == null) {
-        text = t("Looking for the newest version…");
+        text = t("Looking for the newest version...");
       } else {
         label += " · " + offer.optString("darkosen") + " · " + humanBytes(offer.optLong("download_bytes"));
         boolean fits = WorkState.guestFitsCard(offer);
@@ -2068,7 +2068,7 @@ public final class MainActivity extends Activity {
             JSONObject candidate=new JSONObject(choice.toString()).put(field,id);JSONObject result=evaluate(candidate,new String[]{"bootloader","sleep","chain"}[row]);String reason="";
             JSONArray issues=result.optJSONArray("issues");if(issues!=null)for(int i=0;i<issues.length();i++){JSONObject v=issues.getJSONObject(i);if("impossible".equals(v.optString("level"))){reason=t(v.optString("reason"));break;}}
             if(row==0&&"image".equals(id)&&!context.optBoolean("image_available"))reason=t("Choose the image file to put its bootloader back.");
-            if((row==0&&!"image".equals(id)&&loaderBuild(id)==null)||(row==2&&"mainline".equals(id)&&loaderBuild("new")==null))reason=t("Looking for bootloader builds…");
+            if((row==0&&!"image".equals(id)&&loaderBuild(id)==null)||(row==2&&"mainline".equals(id)&&loaderBuild("new")==null))reason=t("Looking for bootloader builds...");
             why.add(reason);
           }
           if(row<2&&mainline){ids=new ArrayList<>(Arrays.asList("image"));labels=new ArrayList<>(Arrays.asList(t("Part of the mainline chain")));why=new ArrayList<>(Arrays.asList(t("Part of the mainline chain")));selected="image";}
@@ -2134,7 +2134,7 @@ public final class MainActivity extends Activity {
       JSONObject context=info.optJSONObject("boot_target");if(context==null)context=bootContext(setup);context.put("image_available",WorkState.image!=null);context.put("storage",layout==null||layout.optBoolean("data_card")?"emmc":"sd");
       JSONObject initial=new JSONObject().put("choice","image").put("chain","standard").put("sleep","image");
       BootOptionsView view=new BootOptionsView(initial,context,c->{});
-      new AlertDialog.Builder(this).setTitle(t("Boot options")).setView(view).setNegativeButton(t("Cancel"),null).setNeutralButton(t("Choose image from disk…"),(d,w)->pick(1)).setPositiveButton(t("Apply"),(d,w)->view.confirm(choice->{
+      new AlertDialog.Builder(this).setTitle(t("Boot options")).setView(view).setNegativeButton(t("Cancel"),null).setNeutralButton(t("Choose image from disk..."),(d,w)->pick(1)).setPositiveButton(t("Apply"),(d,w)->view.confirm(choice->{
         WorkState.start(getApplicationContext(),true,()->{try(UsbCard.Connection disk=card.open(getApplicationContext())){
           JSONObject req=new JSONObject().put("identity",disk.identity()).put("fingerprint",layout.getString("fingerprint")).put("build",info.getString("build_identity")).put("bootloader",choice);
           JSONObject out=new JSONObject(WorkState.engine.applyBootloader(disk,req.toString(),WorkState::event));

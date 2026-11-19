@@ -19,12 +19,13 @@ type block struct {
 	RO                                    bool
 	Sector                                int64     `json:"log-sec"`
 	FSTypeJSON                            *string   `json:"fstype"`
+	PartLabel                             *string   `json:"partlabel"`
 	Mounts                                []*string `json:"mountpoints"`
 	Children                              []block
 }
 
 func blocks() ([]block, error) {
-	b, e := hostCommand("lsblk", "--bytes", "--json", "--output", "NAME,PATH,TYPE,SIZE,MODEL,SERIAL,RM,TRAN,MOUNTPOINTS,LOG-SEC,RO,FSTYPE").Output()
+	b, e := hostCommand("lsblk", "--bytes", "--json", "--output", "NAME,PATH,TYPE,SIZE,MODEL,SERIAL,RM,TRAN,MOUNTPOINTS,LOG-SEC,RO,FSTYPE,PARTLABEL").Output()
 	if e != nil {
 		return nil, e
 	}
@@ -166,6 +167,9 @@ func drives(bs []block, all bool) []Drive {
 		}
 		var add func(block)
 		add = func(x block) {
+			if x.PartLabel != nil && *x.PartLabel != "" {
+				d.Labels = append(d.Labels, *x.PartLabel)
+			}
 			for _, m := range x.Mounts {
 				if m != nil && *m != "" {
 					d.Volumes = append(d.Volumes, x.Path)

@@ -209,11 +209,11 @@ public class AppTest {
           activity -> {
             View root = activity.getWindow().getDecorView();
             assertTrue(contains(root, "Your SD card matters"));
-            assertFalse(contains(root, "Download a release…"));
+            assertFalse(contains(root, "Download a release..."));
             assertFalse(
                 context.getSharedPreferences("settings", 0).getBoolean("sd-card-advice-v1", false));
             findText(root, "I understand").performClick();
-            assertTrue(contains(activity.getWindow().getDecorView(), "Download a release…"));
+            assertTrue(contains(activity.getWindow().getDecorView(), "Download a release..."));
           });
       scenario.recreate();
       scenario.onActivity(

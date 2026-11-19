@@ -127,12 +127,12 @@ func TestWrongVerbsInTranslationFallBack(t *testing.T) {
 		m[k] = v
 	}
 	m["%d device profiles"] = "%s Geräteprofile"
-	m["Downloading %s…"] = "Lade %s %s herunter…"
+	m["Downloading %s..."] = "Lade %s %s herunter..."
 	catalogs["de"] = m
 	if got := Text("de", "%d device profiles", 38); got != "38 device profiles" {
 		t.Fatal(got)
 	}
-	if got := Text("de", "Downloading %s…", "dArkOS"); strings.Contains(got, "%!") {
+	if got := Text("de", "Downloading %s...", "dArkOS"); strings.Contains(got, "%!") {
 		t.Fatal(got)
 	}
 }

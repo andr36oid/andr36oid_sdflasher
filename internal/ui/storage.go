@@ -23,7 +23,9 @@ func (s *screen) buildStorage() {
 		s.userdataGiB = 0
 		s.ready()
 	})
-	s.storage = container.NewVBox(s.sizeLabel, s.sizeSlider, container.NewHBox(s.sizeAuto))
+	s.storageKept = wrapped(s.t("Kept as it is"))
+	s.storageBox = container.NewVBox(s.noROMs, wrapped(s.t("Unchecked: choose below how much of the card Android gets. The rest becomes a games partition readable on your computer. Updates keep the existing arrangement.")),
+		s.sizeLabel, s.sizeSlider, container.NewHBox(s.sizeAuto))
 }
 
 // storageText says how the card will be split, or "" when there is nothing to choose.
@@ -56,6 +58,13 @@ func (s *screen) refreshStorage() {
 		s.userdataGiB = 0
 	}
 	s.sizeLabel.SetText(s.storageText())
+	if s.updating {
+		s.storageKept.Show()
+		s.storageBox.Hide()
+	} else {
+		s.storageKept.Hide()
+		s.storageBox.Show()
+	}
 	if s.drive == nil || s.updating || s.noROMs.Checked || max <= flash.MinUserdataGiB {
 		s.sizeSlider.Hide()
 		s.sizeAuto.Hide()

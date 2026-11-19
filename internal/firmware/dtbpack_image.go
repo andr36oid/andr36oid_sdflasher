@@ -130,6 +130,6 @@ func ImageWithDTBPack(im *Image, p *DTBPack, dir string) (*Image, error) {
 	out := *im
 	out.Profiles = profiles
 	out.DTBPack = p
-	out.DTBVersion = fmt.Sprintf("%s · r%d", p.Manifest.Version, p.Manifest.Revision)
+	out.DTBVersion = fmt.Sprintf("%s - r%d", p.Manifest.Version, p.Manifest.Revision)
 	return &out, nil
 }

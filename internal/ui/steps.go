@@ -1,20 +1,24 @@
 package ui
 
 import (
-	"fmt"
+	"image/color"
 	"path/filepath"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/platform"
 )
 
-// The setup is a row of steps. Each step is one page; Back and Next move
-// between them, and the step buttons at the top jump to any step that is
-// already reachable.
+// The setup is a row of steps, listed in the side bar. Each step is one page;
+// Back and Next move between them, and the side bar jumps back to any step that
+// is already reachable. Nothing is written before the last one.
 const (
-	stepImage = iota
+	stepStart = iota
+	stepImage
 	stepCard
 	stepConsole
 	stepOptions
@@ -22,23 +26,34 @@ const (
 	stepCount
 )
 
-var stepNames = [stepCount]string{"Release", "Card", "Console", "Options", "Write"}
+var stepNames = [stepCount]string{"Start", "Release", "Card", "Console", "Options", "Write"}
+
+// what the user wants to do, chosen on the first page
+const (
+	taskNew = iota
+	taskUpdate
+	taskFix
+)
 
 func heading(text string) *widget.Label {
-	return widget.NewLabelWithStyle(text, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	l := wrapped(text)
+	l.TextStyle = fyne.TextStyle{Bold: true}
+	return l
 }
 
 // stepDone says whether a step has what the next steps need.
 func (s *screen) stepDone(step int) bool {
 	switch step {
+	case stepStart:
+		return s.task != taskFix
 	case stepImage:
 		return s.im != nil
 	case stepCard:
-		return s.drive != nil && s.card != nil
+		return s.drive != nil && s.card != nil && s.cardProblem() == ""
 	case stepConsole:
-		return s.profile != ""
+		return s.profileOK()
 	case stepOptions:
-		return !s.updating || (s.card != nil && s.card.Installed)
+		return !s.guestBlocked()
 	}
 	return false
 }
@@ -53,82 +68,225 @@ func (s *screen) reachable(step int) bool {
 	return true
 }
 
+// cardProblem is why the chosen card can't be used for the chosen task, "" if it can.
+func (s *screen) cardProblem() string {
+	switch {
+	case s.drive == nil || s.card == nil:
+		return ""
+	case s.drive.WriteProtected:
+		return s.t(platform.WriteProtectedReason)
+	case s.updating && !s.card.Installed:
+		return s.t("This card has no andr36oid to update.")
+	case s.tooSmall():
+		return s.tooSmallText()
+	}
+	return ""
+}
+
+// profileOK: a profile of the release is chosen and, for an experimental one, its
+// warning was agreed to.
+func (s *screen) profileOK() bool {
+	p := s.chosenProfile()
+	return p != nil && (!p.Experimental || s.experimentalOK[p.ID])
+}
+
+func (s *screen) chosenProfile() *firmware.Profile {
+	if s.im == nil || s.profile == "" {
+		return nil
+	}
+	for i, p := range s.im.Profiles {
+		if p.ID == s.profile {
+			return &s.im.Profiles[i]
+		}
+	}
+	return nil
+}
+
+// show puts a page on the right side of the window.
+func (s *screen) show(page fyne.CanvasObject) {
+	if s.body == nil {
+		return
+	}
+	s.body.Objects = []fyne.CanvasObject{page}
+	s.body.Refresh()
+}
+
+// current is the page shown now, to come back to after a short flow.
+func (s *screen) current() fyne.CanvasObject {
+	if s.body == nil || len(s.body.Objects) == 0 {
+		return nil
+	}
+	return s.body.Objects[0]
+}
+
+// leave shows a page that is not one of the steps (a fix flow, the working page,
+// a result); the side bar keeps showing where the setup stands.
+func (s *screen) leave(page fyne.CanvasObject) {
+	s.inSteps = false
+	s.show(page)
+	s.refreshSteps()
+}
+
 func (s *screen) showStep(step int) {
 	if step < 0 || step >= stepCount || !s.reachable(step) {
 		return
 	}
 	s.step = step
-	if s.pages == nil {
+	s.inSteps = true
+	if s.pages[step] == nil {
 		return
 	}
-	for i, p := range s.pages {
-		if i == step {
-			p.Show()
-		} else {
-			p.Hide()
+	s.show(s.pages[step])
+	switch step {
+	case stepImage:
+		s.lookupReleases()
+	case stepCard:
+		if !s.listing && !s.busy {
+			s.listDrives()
+		}
+	case stepConsole:
+		s.refreshConsoles()
+	case stepOptions:
+		if s.started && s.bootloaderOptions != nil {
+			s.bootloaderOptions.load()
 		}
 	}
-	s.refreshSteps()
-	if step == stepOptions && s.started && s.bootloaderOptions != nil {
-		s.bootloaderOptions.load()
-	}
-	if step == stepWrite {
-		s.summarize()
-	}
+	s.ready()
 }
 
-// refreshSteps updates the step bar, Back/Next and the write button.
+// next is what the Next button of a step does.
+func (s *screen) next(step int) {
+	switch step {
+	case stepStart:
+		if s.task == taskFix {
+			s.showFix()
+			return
+		}
+	case stepImage:
+		// the chosen release is downloaded and checked first; loadImage moves on
+		if s.asset != nil && (s.im == nil || s.im.Source != s.asset.URL) {
+			s.download(*s.asset)
+			return
+		}
+	}
+	s.showStep(step + 1)
+}
+
+// sideBar is the fixed column on the left: the name, the version, the steps, and
+// at the bottom the language and the log.
+func (s *screen) sideBar() fyne.CanvasObject {
+	steps := container.NewVBox()
+	for i := range s.sideSteps {
+		step := i
+		b := widget.NewButton(s.t(stepNames[i]), func() {
+			if s.sideLocked() {
+				return
+			}
+			if s.inSteps || s.reachable(step) {
+				s.showStep(step)
+			}
+		})
+		b.Alignment = widget.ButtonAlignLeading
+		s.sideSteps[i] = b
+		// the side bar's colour as it shows (its fill over the window's), a little
+		// see-through
+		r, g, bl, a := sideBackground().FillColor.RGBA()
+		br, bg, bb, _ := theme.Color(theme.ColorNameBackground).RGBA()
+		over := func(top, under uint32) uint8 { return uint8((top + under*(0xffff-a)/0xffff) >> 8) }
+		dim := canvas.NewRectangle(color.NRGBA{over(r, br), over(g, bg), over(bl, bb), 80})
+		dim.Hide()
+		s.sideDims[i] = dim
+		steps.Add(container.NewStack(b, dim))
+	}
+	name := heading("andr36oid SD Flasher")
+	version := widget.NewLabel(Version)
+	version.Importance = widget.LowImportance
+	s.language = widget.NewButtonWithIcon(s.languageName(), theme.SettingsIcon(), s.chooseLanguage)
+	s.language.Alignment = widget.ButtonAlignLeading
+	s.language.Importance = widget.LowImportance
+	s.details = widget.NewButtonWithIcon(s.t("Show details"), theme.ListIcon(), s.showLog)
+	s.details.Alignment = widget.ButtonAlignLeading
+	s.details.Importance = widget.LowImportance
+	s.updateBanner = container.NewVBox()
+	s.renderAppUpdate()
+	top := container.NewVBox(name, version, widget.NewSeparator(), steps, s.updateBanner)
+	bottom := container.NewVBox(widget.NewSeparator(), s.language, s.details)
+	bg := container.NewBorder(top, bottom, nil, nil)
+	return container.New(fixedWidth{200}, container.NewStack(sideBackground(), container.NewPadded(bg)))
+}
+
+// sideLocked: the side bar's steps can't be used now.
+func (s *screen) sideLocked() bool {
+	return s.busy || !s.inSteps && s.step != stepStart
+}
+
+// refreshSteps updates the side bar and the Back and Next buttons of every page.
 func (s *screen) refreshSteps() {
-	if s.stepButtons[0] == nil {
+	if s.sideSteps[0] == nil {
 		return
 	}
 	// a step that lost what it needs (card removed, new release) sends the user back
-	if !s.busy && !s.reachable(s.step) {
+	if s.inSteps && !s.busy && !s.reachable(s.step) {
 		for s.step > 0 && !s.reachable(s.step) {
 			s.step--
 		}
 		s.showStep(s.step)
 		return
 	}
-	for i, b := range s.stepButtons {
-		b.SetText(fmt.Sprintf("%d. %s", i+1, s.t(stepNames[i])))
+	for i, b := range s.sideSteps {
+		b.SetText(s.t(stepNames[i]))
 		switch {
 		case i == s.step:
+			b.SetIcon(theme.NavigateNextIcon())
 			b.Importance = widget.HighImportance
+		case i < s.step && s.stepDone(i):
+			b.SetIcon(theme.ConfirmIcon())
+			b.Importance = widget.LowImportance
 		default:
-			b.Importance = widget.MediumImportance
+			b.SetIcon(theme.RadioButtonIcon())
+			b.Importance = widget.LowImportance
 		}
-		if s.busy || !s.reachable(i) {
-			b.Disable()
-		} else {
+		// while a write runs or a fix flow is open the steps stay readable, only
+		// a little dimmed; a step not reached yet is greyed out
+		switch {
+		case s.sideLocked() && s.reachable(i):
 			b.Enable()
+			s.sideDims[i].Show()
+		case !s.reachable(i):
+			b.Disable()
+			s.sideDims[i].Hide()
+		default:
+			b.Enable()
+			s.sideDims[i].Hide()
 		}
 		b.Refresh()
 	}
-	if s.step == 0 || s.busy {
-		s.back.Disable()
-	} else {
-		s.back.Enable()
-	}
-	if s.step == stepWrite {
-		s.next.Hide()
-	} else {
-		s.next.Show()
-		if !s.busy && s.stepDone(s.step) {
-			s.next.Enable()
+	for i := range s.nexts {
+		if s.backs[i] != nil {
+			if s.busy {
+				s.backs[i].Disable()
+			} else {
+				s.backs[i].Enable()
+			}
+		}
+		if s.nexts[i] == nil {
+			continue
+		}
+		ok := s.stepDone(i)
+		if i == stepImage {
+			ok = s.im != nil || s.asset != nil
+		}
+		if !s.busy && ok {
+			s.nexts[i].Enable()
 		} else {
-			s.next.Disable()
+			s.nexts[i].Disable()
 		}
 	}
 }
 
 func (s *screen) profileName() string {
-	if s.im != nil {
-		for _, p := range s.im.Profiles {
-			if p.ID == s.profile {
-				return p.Name
-			}
-		}
+	if p := s.chosenProfile(); p != nil {
+		return shown(p.Name)
 	}
 	return s.profile
 }
@@ -141,130 +299,4 @@ func (s *screen) dtbText() string {
 		return s.t("Custom Android DTB") + ": " + filepath.Base(s.custom)
 	}
 	return s.t("Use the DTB shipped with the selected profile.")
-}
-
-// summarize fills the last page: what will be written where.
-func (s *screen) summarize() {
-	if s.sumValues[0] == nil {
-		return
-	}
-	set := func(i int, v string) { s.sumValues[i].SetText(v) }
-	set(0, "")
-	if s.im != nil {
-		set(0, s.im.Version+"\n"+filepath.Base(s.im.Source))
-	}
-	set(1, "")
-	if s.drive != nil {
-		set(1, s.drive.Label())
-	}
-	set(2, s.profileName())
-	set(3, s.dtbText())
-	if s.bootloaderOptions != nil {
-		if c := s.bootloaderOptions.selection(); c != nil {
-			if c.Changed() {
-				set(6, s.bootloaderOptions.summary.Text)
-			} else if c.Build != nil {
-				set(6, s.bootloaderSummary(&firmware.BootloaderRecord{Choice: c.Choice, Version: c.Build.Version, Tag: c.Build.Tag}))
-			} else {
-				set(6, s.t("Bootloader: as in the image"))
-			}
-		} else {
-			set(6, s.t(firmware.BootloaderOnlySD))
-		}
-	}
-	if s.updating {
-		set(4, s.t("Update an existing installation"))
-		if s.system != "" {
-			set(4, s.sumValues[4].Text+" · "+s.systemText())
-		}
-		set(5, s.t("Kept as it is"))
-	} else {
-		set(4, s.t("Install a new card (erase)"))
-		if s.system != "" {
-			set(4, s.sumValues[4].Text+" · "+s.systemText())
-		}
-		set(5, s.storageText())
-	}
-	if s.updating {
-		s.action.SetText(s.t("Update this card…"))
-		s.help.SetText(s.t("BOOT, system, and vendor will be updated together. The dedicated cache will be cleared. Userdata and games stay in place. A recovery backup will be saved before writing."))
-		s.help.Importance = widget.MediumImportance
-		s.action.Importance = widget.HighImportance
-	} else {
-		s.action.SetText(s.t("Erase and write this card…"))
-		s.help.SetText(s.t("Everything currently on this card will be erased."))
-		s.help.Importance = widget.DangerImportance
-		s.action.Importance = widget.DangerImportance
-	}
-	s.help.Refresh()
-	s.action.Refresh()
-}
-
-var summaryKeys = [len(screen{}.sumValues)]string{"Release", "microSD card", "Device profile", "DTB", "Action", "Storage", "Boot options"}
-
-func (s *screen) summaryForm() *widget.Form {
-	f := widget.NewForm()
-	for i, k := range summaryKeys {
-		s.sumValues[i] = wrapped("")
-		f.Append(s.t(k), s.sumValues[i])
-	}
-	return f
-}
-
-// pagesFor builds the five step pages. The widgets are made in build().
-func (s *screen) pagesFor(advanced fyne.CanvasObject) []*fyne.Container {
-	unknown := widget.NewButton(s.t("I don’t know my board or panel"), func() {
-		s.info(s.t("Finding your board and panel"), s.t("An existing andr36oid card may identify its selected profile. For a new card, use your console’s board markings and the panel information from its supplier. Similar-looking R36S consoles can have different wiring. Choose the board family first; a panel number alone is not enough. If your console is missing here, this release does not ship its profile."), s.win)
-	})
-	own := widget.NewButton(s.t(ownDTBButton), s.chooseOwnDTB)
-	pages := []*fyne.Container{
-		container.NewVBox(
-			heading(s.t("Choose the andr36oid release")),
-			wrapped(s.t("Download a release, or choose an image file you already have. Only Treble images can be installed.")),
-			container.NewGridWithColumns(2, s.online, s.local),
-			s.releaseLabel, s.progress,
-		),
-		container.NewVBox(
-			heading(s.t("Choose the microSD card")),
-			wrapped(s.t("The card is only read now. Nothing is written before the last step.")),
-			container.NewBorder(nil, nil, nil, s.refresh, s.driveSelect),
-			s.cardLabel,
-			s.allCheck,
-		),
-		container.NewVBox(
-			heading(s.t("Choose your console")),
-			wrapped(s.t("Choose the board family first, then the board and screen.")),
-			s.console, s.profileSelect, unknown,
-			s.imageDTBSection(),
-			widget.NewSeparator(),
-			heading(s.t("DTB")),
-			s.customLabel,
-			own,
-			advanced,
-		),
-		container.NewVBox(
-			heading(s.t("What should happen to the card?")),
-			s.mode,
-			s.modeHelp,
-			widget.NewSeparator(),
-			heading(s.t("Storage")),
-			s.noROMs,
-			wrapped(s.t("Unchecked: choose below how much of the card Android gets. The rest becomes a games partition readable on your computer. Updates keep the existing arrangement.")),
-			s.storage,
-			s.guestBox,
-			widget.NewSeparator(),
-			s.systemSection(),
-			widget.NewSeparator(),
-			s.bootloaderSection(),
-		),
-		container.NewVBox(
-			heading(s.t("Check and write")),
-			s.summaryForm(),
-			widget.NewSeparator(),
-			s.help,
-			s.action,
-			s.buildGuestWork(),
-		),
-	}
-	return pages
 }
