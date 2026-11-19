@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -60,14 +61,36 @@ func Resolve(locale string) string {
 func Text(locale, key string, args ...any) string {
 	code := Resolve(locale)
 	out := catalogs[code][key]
+	en := catalogs["en"][key]
 	if out == "" {
-		out = catalogs["en"][key]
+		out = en
 	}
 	if out == "" {
 		out = key
 	}
 	if len(args) > 0 {
+		// a translation whose verbs are not the English ones would print %!s(MISSING)
+		// or worse: the English text is shown instead
+		if en != "" && out != en && !sameVerbs(out, en) {
+			out = en
+		}
 		return fmt.Sprintf(out, args...)
 	}
 	return out
+}
+
+var verb = regexp.MustCompile(`%[-+# 0-9.]*[a-zA-Z%]`)
+
+// sameVerbs: a and b have the same formatting verbs in the same order.
+func sameVerbs(a, b string) bool {
+	x, y := verb.FindAllString(a, -1), verb.FindAllString(b, -1)
+	if len(x) != len(y) {
+		return false
+	}
+	for i := range x {
+		if x[i] != y[i] {
+			return false
+		}
+	}
+	return true
 }

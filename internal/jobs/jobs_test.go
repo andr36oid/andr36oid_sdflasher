@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 )
 
 // fakeHelper stands in for the disk helper: it leaves status (if any) as the
@@ -76,5 +77,21 @@ func TestSleepInhibitedOnlyForWrites(t *testing.T) {
 		if _, e := Run(Request{Action: action, Mode: "update"}, nil); e == nil || *a != 1 || *r != 1 {
 			t.Fatalf("%s: %v, inhibited %d, released %d", action, e, *a, *r)
 		}
+	}
+}
+
+// A refused administrator prompt (pkexec 126, the UAC "no", osascript's cancel) is
+// explained as such; a helper that reported its own error before it ended keeps that
+// error, whatever its exit.
+func TestHelperRefusalIsExplained(t *testing.T) {
+	fakeHelper(t, nil, errors.New("exit status 126"))
+	_, e := Run(Request{Action: "inspect"}, nil)
+	if key, _, _ := i18n.Find(e); key != i18n.CauseHelperStopped.Key() {
+		t.Fatal(e, key)
+	}
+	fakeHelper(t, &Result{Done: true, Error: "write /dev/sdb: input/output error", ErrorKind: flash.FailureDevice}, errors.New("exit status 1"))
+	_, e = Run(Request{Action: "write", Mode: "install"}, nil)
+	if flash.Classify(e) != flash.FailureDevice || !strings.Contains(e.Error(), "input/output error") || strings.Contains(e.Error(), "administrator") {
+		t.Fatal(e)
 	}
 }

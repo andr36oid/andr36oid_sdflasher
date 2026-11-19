@@ -343,7 +343,7 @@ func TestHarnessBadCards(t *testing.T) {
 			if e == nil {
 				t.Fatal("bad card written without an error; writes:", dev.writes.Load())
 			}
-			if Classify(e) != c.kind || !strings.Contains(e.Error(), c.text) || !strings.Contains(e.Error(), "run Install again") {
+			if Classify(e) != c.kind || !strings.Contains(e.Error(), c.text) || !StateIncomplete.Is(e) {
 				t.Fatalf("%q: %v", Classify(e), e)
 			}
 			if len(FailureHints(Classify(e), false)) == 0 {
@@ -401,7 +401,7 @@ func TestHarnessCancelAtEveryStage(t *testing.T) {
 			if !errors.Is(e, context.Canceled) || Classify(e) != FailureOther {
 				t.Fatal(e)
 			}
-			if phase != "preflight" && !strings.Contains(e.Error(), "run Install again") {
+			if phase != "preflight" && !StateIncomplete.Is(e) {
 				t.Fatal("cancel mid-write doesn't say the card is incomplete:", e)
 			}
 		})
@@ -429,7 +429,7 @@ func TestHarnessCounterfeitWrapCard(t *testing.T) {
 	if e == nil {
 		t.Fatal("counterfeit card written without an error; the release image on it is damaged (guest", g.Size, "bytes wrapped onto it)")
 	}
-	if Classify(e) != FailureVerify || !strings.Contains(e.Error(), "run Install again") {
+	if Classify(e) != FailureVerify || !StateIncomplete.Is(e) {
 		t.Fatalf("%q: %v", Classify(e), e)
 	}
 }
@@ -471,7 +471,7 @@ func TestHarnessFakeCardsStopBeforeWriting(t *testing.T) {
 				t.Fatalf("%q: %v", Classify(e), e)
 			}
 			want := "it reports " + gigabytes(size) + ", but only about " + c.works + " works"
-			if !strings.Contains(e.Error(), want) || strings.Contains(e.Error(), "run Install again") {
+			if !strings.Contains(e.Error(), want) || StateIncomplete.Is(e) {
 				t.Fatalf("message %q, want %q", e, want)
 			}
 			if len(FailureHints(Classify(e), false)) == 0 {

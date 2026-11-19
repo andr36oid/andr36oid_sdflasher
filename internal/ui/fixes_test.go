@@ -9,6 +9,7 @@ import (
 	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/platform"
 )
 
@@ -90,7 +91,12 @@ func TestExplainedError(t *testing.T) {
 	if got := s.explain(e); !strings.HasPrefix(got, "This card is not the size it claims") {
 		t.Fatal(got)
 	}
-	if got := s.explain(errors.New("input/output error")); got != "Check the selected image and card, then try again." {
+	// a bare system error is explained by its cause; only an unknown one gets the
+	// general advice
+	if got := s.explain(errors.New("input/output error")); got != i18n.CauseDeviceGone.Key() {
+		t.Fatal(got)
+	}
+	if got := s.explain(errors.New("something only a developer knows")); got != "Check the selected image and card, then try again." {
 		t.Fatal(got)
 	}
 	if h := s.failureHints(e); !strings.Contains(h, "Try a different computer.") || !strings.Contains(h, "Try a different card reader.") {

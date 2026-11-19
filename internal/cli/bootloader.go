@@ -63,7 +63,7 @@ func printBootloader(out *firmware.BootloaderOutcome) {
 func runBootloader(o opts) int {
 	choice, e := cliBootloader(o)
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 2
 	}
 	if choice == nil {
@@ -72,12 +72,12 @@ func runBootloader(o opts) int {
 	}
 	drive, e := pickDrive(o.in, o.all, o.drive)
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	info, e := jobs.Run(jobs.Request{Action: "bootloader-info", Drive: drive}, nil)
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	if drive.Fixed || info.Card == nil || info.Card.DataCard {
@@ -90,7 +90,7 @@ func runBootloader(o opts) int {
 	}
 	target.ImageAvailable = o.imagePath != ""
 	if e = cliCheckBootOptions(*choice, target); e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	if !o.assumeYes && !yes(o.in, "Write the selected boot options on this card? [y/N]: ", false) {
@@ -99,7 +99,7 @@ func runBootloader(o opts) int {
 	req := jobs.Request{Action: "bootloader-apply", Drive: drive, Bootloader: choice, BootloaderExpected: info.BuildIdentity, CardFingerprint: info.Card.Fingerprint, Image: o.imagePath}
 	out, e := jobs.Run(req, func(p flash.Progress) { printProgress(p) })
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	printBootloader(out.Bootloader)

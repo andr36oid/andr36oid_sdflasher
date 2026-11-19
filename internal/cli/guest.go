@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 )
 
 // The game system choice of a new card, as in the window: dArkOS (preselected when it
@@ -148,6 +150,25 @@ func downloadGuest(g *catalog.GuestRelease, cache string) (*flash.Guest, error) 
 	}
 	return &flash.Guest{Path: path, Distribution: g.Distribution, Darkosen: g.Darkosen, Revision: g.Revision, Minimum: g.Minimum,
 		Name: g.Image.Name, Size: g.Image.Size, SHA256: g.Image.SHA256, PartitionBytes: g.PartitionBytes}, nil
+}
+
+// printFailure prints a failure on stderr: what failed (what, "" for nothing), what
+// it means and what to do (the error's message, i18n.ExplainError), the error itself
+// as the detail, and the hints of a card or reader failure (failureHints).
+func printFailure(what string, e error) {
+	if what != "" {
+		fmt.Fprintln(os.Stderr, what)
+	}
+	if msg := i18n.ExplainError("en", e); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		fmt.Fprintln(os.Stderr, "Details:", e)
+	} else {
+		fmt.Fprintln(os.Stderr, e)
+	}
+	if hints := failureHints(e); len(hints) > 0 {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, strings.Join(hints, "\n"))
+	}
 }
 
 // failureHints are the lines printed after a failed write's error (flash.FailureHints).

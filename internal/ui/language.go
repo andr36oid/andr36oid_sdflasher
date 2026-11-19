@@ -3,6 +3,7 @@ package ui
 import (
 	"embed"
 	"encoding/json"
+	"runtime"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -118,14 +119,40 @@ func fitDialog(d dialog.Dialog, message string, parent fyne.Window) {
 	d.Resize(fyne.NewSize(w, h))
 }
 func (s *screen) showError(err error) {
-	s.info(s.t("Operation could not finish"), s.explain(err)+"\n\n"+s.t("Technical details")+":\n"+err.Error(), s.win)
+	message := s.explain(err) + "\n\n" + s.t("Technical details") + ":\n" + err.Error()
+	d := dialog.NewCustom(s.t("Operation could not finish"), s.t("OK"), wrapped(message), s.win)
+	d.SetButtons([]fyne.CanvasObject{s.copyDetails(err), widget.NewButton(s.t("OK"), d.Hide)})
+	fitDialog(d, message, s.win)
+	d.Show()
+}
+
+// copyDetails is a button that puts a failure's report on the clipboard, for a
+// message to the developers: the version, the system, the message and the error.
+func (s *screen) copyDetails(err error) *widget.Button {
+	var b *widget.Button
+	b = widget.NewButton(s.t("Copy details"), func() {
+		fyne.CurrentApp().Clipboard().SetContent(failureReport(err, s.explain(err)))
+		b.SetText(s.t("Copied"))
+	})
+	return b
+}
+
+// failureReport is the text copyDetails copies: no paths beyond the error's own.
+func failureReport(err error, explained string) string {
+	return "andr36oid SD Flasher " + Version + " (" + runtime.GOOS + "/" + runtime.GOARCH + ")\n" +
+		explained + "\n\n" + err.Error() + "\n"
 }
 
 // explain is the user's message in err, translated (i18n.Find), or the general
 // advice for an error that has none.
 func (s *screen) explain(err error) string {
 	if key, args, ok := i18n.Find(err); ok {
-		return s.t(key, args...)
+		out := s.t(key, args...)
+		// what the error left the card like (i18n.NewState)
+		if skey, sargs, ok := i18n.FindState(err); ok && skey != key {
+			out += "\n\n" + s.t(skey, sargs...)
+		}
+		return out
 	}
 	return s.t("Check the selected image and card, then try again.")
 }

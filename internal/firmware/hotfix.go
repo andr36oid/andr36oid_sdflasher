@@ -250,17 +250,20 @@ func placeHotfix(boot filesystem.FileSystem, h Hotfix, data io.Reader) error {
 	}
 	f, e := boot.OpenFile("hotfix/"+h.File, os.O_CREATE|os.O_TRUNC|os.O_RDWR)
 	if e != nil {
-		return e
+		return fmt.Errorf("open BOOT/hotfix/%s: %w", h.File, e)
 	}
 	n, e := io.Copy(f, data)
 	ce := f.Close()
 	if e != nil {
-		return e
+		return fmt.Errorf("write BOOT/hotfix/%s: %w", h.File, e)
 	}
 	if n != h.Size {
 		return io.ErrShortWrite
 	}
-	return ce
+	if ce != nil {
+		return fmt.Errorf("write BOOT/hotfix/%s: %w", h.File, ce)
+	}
+	return nil
 }
 
 type HotfixDisk interface {

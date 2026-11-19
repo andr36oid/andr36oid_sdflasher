@@ -2,10 +2,16 @@ package cli
 
 import (
 	"bufio"
+	"errors"
+	"fmt"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 )
 
 func guestTestOptions() []guestOption {
@@ -42,5 +48,30 @@ func TestGuestChoiceWithYes(t *testing.T) {
 	g, e = chooseGuest(bufio.NewReader(strings.NewReader("\n")), options, "", false)
 	if e != nil || g == nil || g.Source.ID != "dArkOSRE" {
 		t.Fatal("interactive default past an unavailable one", g, e)
+	}
+}
+
+// Text mode prints what failed, what it means and what to do, the error itself as the
+// detail, and the hints of a card failure; an error without a message stays as it is.
+func TestPrintFailureExplains(t *testing.T) {
+	capture := func(f func()) string {
+		r, w, _ := os.Pipe()
+		old := os.Stderr
+		os.Stderr = w
+		f()
+		os.Stderr = old
+		w.Close()
+		b, _ := io.ReadAll(r)
+		return string(b)
+	}
+	e := flash.DeviceFailure(fmt.Errorf("%w; %w", errors.New("write /dev/sdb: input/output error"), flash.StateIncomplete.New()))
+	out := capture(func() { printFailure("The write failed.", e) })
+	for _, want := range []string{"The write failed.\n", i18n.CauseDeviceGone.Key(), flash.StateIncomplete.Key(), "Details: write /dev/sdb: input/output error", "Try a different card reader."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in\n%s", want, out)
+		}
+	}
+	if out := capture(func() { printFailure("", errors.New("No device profile chosen.")) }); out != "No device profile chosen.\n" {
+		t.Fatalf("%q", out)
 	}
 }

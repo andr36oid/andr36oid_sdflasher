@@ -181,7 +181,7 @@ func inspect(ctx context.Context, p string, progress func(int64, int64), digest 
 	}
 	// A release image is uninitialized: importing an installed card could copy personal data.
 	if _, ok := t.Find("userdata"); ok {
-		return nil, errors.New("select a release image, not an image of an installed card")
+		return nil, ErrCardCopy.New()
 	}
 	boot, e := OpenBoot(f, t, true)
 	if e != nil {
@@ -435,8 +435,7 @@ func (p Profile) For(console string) bool {
 const ProfileList = "andr36oid-profiles.txt"
 
 // ErrNoProfileList is an image from before 2026-10-22, which names its profiles nowhere.
-var ErrNoProfileList = errors.New("this image is not compatible with this flasher: its BOOT partition has no " +
-	ProfileList + ". Choose an andr36oid release from 2026-10-22 or later")
+var ErrNoProfileList = errNoProfileList.New()
 
 type profileInfo struct {
 	Name, Console string
@@ -452,7 +451,8 @@ func parseProfileList(b []byte) map[string]profileInfo {
 			continue
 		}
 		f := strings.Split(line, "|")
-		if len(f) < 3 || f[0] == "" {
+		// a line without a folder ("/|...", "|...") names no profile
+		if len(f) < 3 || strings.Trim(strings.TrimSpace(f[0]), "/") == "" {
 			continue
 		}
 		info := profileInfo{Console: strings.TrimSpace(f[1]), Name: strings.TrimSpace(f[2])}

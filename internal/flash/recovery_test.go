@@ -152,7 +152,7 @@ func TestUpdateIdentityReadFailureStopsBeforeWrites(t *testing.T) {
 	counted := &faulty{File: dst}
 	dev := &unreadableIdentity{Device: counted, offset: p.Protected[0].Offset}
 	e = Execute(context.Background(), dev, im, p, boot, t.TempDir(), nil)
-	if !errors.Is(e, io.ErrUnexpectedEOF) || !strings.Contains(e.Error(), "no card bytes were written") {
+	if !errors.Is(e, io.ErrUnexpectedEOF) || !StateUntouched.Is(e) {
 		t.Fatalf("expected backup read failure, got %v", e)
 	}
 	if counted.writes != 0 {

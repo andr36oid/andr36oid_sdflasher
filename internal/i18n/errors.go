@@ -62,20 +62,18 @@ func (e *Error) Error() string {
 // New is the message with args, one for each %s.
 func (f *Format) New(args ...string) error { return &Error{Format: f, Args: args} }
 
-// Is: an error of the format, whatever its arguments.
+// Is: an error of the format, whatever its arguments: one of its messages is, or
+// its text has the message (an error that crossed as text).
 func (f *Format) Is(e error) bool {
-	var m *Error
-	for e != nil {
-		if errors.As(e, &m) {
-			if m.Format == f {
-				return true
-			}
-			e = errors.Unwrap(m)
-			continue
-		}
-		return f.re.MatchString(e.Error())
+	if e == nil {
+		return false
 	}
-	return false
+	for _, m := range messages(e) {
+		if m.Format == f {
+			return true
+		}
+	}
+	return f.re.MatchString(e.Error())
 }
 
 // Formats are the registered keys, for the tests.
@@ -90,28 +88,88 @@ func Formats() []string {
 }
 
 // Find is the first registered message in an error (or its text): its key and
-// arguments. ok is false when it has none.
+// arguments. A message about the card's state (NewState) only counts when there is
+// nothing else, and a cause (NewCause) only when the error has no message at all.
+// ok is false when it has none.
 func Find(e error) (key string, args []any, ok bool) {
 	if e == nil {
 		return "", nil, false
 	}
-	var m *Error
-	if errors.As(e, &m) {
-		for _, a := range m.Args {
-			args = append(args, a)
+	var state *Error
+	for _, m := range messages(e) {
+		if isState(m.Format) {
+			if state == nil {
+				state = m
+			}
+			continue
 		}
-		return m.Format.key, args, true
+		return m.Format.key, m.args(), true
 	}
-	return FindText(e.Error())
+	if key, args, ok = findText(e.Error(), false); ok {
+		return key, args, true
+	}
+	if f, ok := findCause(e.Error()); ok {
+		return f.key, nil, true
+	}
+	if state != nil {
+		return state.Format.key, state.args(), true
+	}
+	return findText(e.Error(), true)
+}
+
+// messages are the *Error in e's tree, in the order errors.As would find them.
+func messages(e error) []*Error {
+	var out []*Error
+	var walk func(error)
+	walk = func(e error) {
+		for e != nil {
+			if m, ok := e.(*Error); ok {
+				out = append(out, m)
+				return
+			}
+			if multi, ok := e.(interface{ Unwrap() []error }); ok {
+				for _, inner := range multi.Unwrap() {
+					walk(inner)
+				}
+				return
+			}
+			e = errors.Unwrap(e)
+		}
+	}
+	walk(e)
+	return out
+}
+
+func (m *Error) args() []any {
+	var out []any
+	for _, a := range m.Args {
+		out = append(out, a)
+	}
+	return out
 }
 
 // FindText is Find for an error's text.
 func FindText(raw string) (key string, args []any, ok bool) {
+	if key, args, ok = findText(raw, false); ok {
+		return key, args, true
+	}
+	if f, ok := findCause(raw); ok {
+		return f.key, nil, true
+	}
+	return findText(raw, true)
+}
+
+// findText is the registered message that comes first in raw, of the state
+// messages when states is true, of the others when not.
+func findText(raw string, states bool) (key string, args []any, ok bool) {
 	formatsMu.Lock()
 	list := append([]*Format(nil), formats...)
 	formatsMu.Unlock()
 	best := -1
 	for _, f := range list {
+		if isState(f) != states {
+			continue
+		}
 		loc := f.re.FindStringSubmatchIndex(raw)
 		if loc == nil || (best >= 0 && loc[0] >= best) {
 			continue
@@ -125,13 +183,64 @@ func FindText(raw string) (key string, args []any, ok bool) {
 	return key, args, best >= 0
 }
 
+// A state message says what an error left the card like ("the card is incomplete,
+// write it again"). It is added after an error's own message, or its cause.
+var (
+	statesMu sync.Mutex
+	states   = map[*Format]bool{}
+)
+
+// NewState registers key as a state message (NewFormat).
+func NewState(key string) *Format {
+	f := NewFormat(key)
+	statesMu.Lock()
+	states[f] = true
+	statesMu.Unlock()
+	return f
+}
+
+func isState(f *Format) bool {
+	statesMu.Lock()
+	defer statesMu.Unlock()
+	return states[f]
+}
+
 // Explain is the registered message in raw, translated, or "" when it has none.
+// When raw also says what the error left the card like (NewState), that follows on
+// its own paragraph.
 func Explain(locale, raw string) string {
 	key, args, ok := FindText(raw)
 	if !ok {
 		return ""
 	}
-	return Text(locale, key, args...)
+	out := Text(locale, key, args...)
+	if skey, sargs, ok := findText(raw, true); ok && skey != key {
+		out += "\n\n" + Text(locale, skey, sargs...)
+	}
+	return out
+}
+
+// ExplainError is Explain for an error, which may carry its messages as values.
+func ExplainError(locale string, e error) string {
+	key, args, ok := Find(e)
+	if !ok {
+		return ""
+	}
+	out := Text(locale, key, args...)
+	if skey, sargs, ok := FindState(e); ok && skey != key {
+		out += "\n\n" + Text(locale, skey, sargs...)
+	}
+	return out
+}
+
+// FindState is the state message in e (NewState), ok false for none.
+func FindState(e error) (string, []any, bool) {
+	for _, m := range messages(e) {
+		if isState(m.Format) {
+			return m.Format.key, m.args(), true
+		}
+	}
+	return findText(e.Error(), true)
 }
 
 // Has: key is in en.json.

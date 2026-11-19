@@ -1064,8 +1064,10 @@ func (s *screen) write(p *flash.Plan) {
 	})
 	eject.Importance = widget.HighImportance
 	eject.Hide()
+	// after a failure: the report for a message to the developers
+	copyBox := container.NewHBox()
 	s.win.SetContent(container.NewPadded(container.NewBorder(container.NewVBox(title, widget.NewLabel(s.drive.Label()), widget.NewSeparator()), back, nil, nil,
-		container.NewVScroll(container.NewVBox(phase, bar, outcome, m.img, legend(s.locale), details, eject, waiting)))))
+		container.NewVScroll(container.NewVBox(phase, bar, outcome, copyBox, m.img, legend(s.locale), details, eject, waiting)))))
 	req := jobs.Request{Action: "write", Drive: *s.drive, Image: s.im.Path, ImageHash: s.im.SHA256, CardFingerprint: s.card.Fingerprint, Mode: p.Mode, Profile: s.profile, NoROMs: p.NoROMs, UserdataGiB: p.UserdataGiB, CustomDTB: s.custom, CustomAccepted: s.customAccepted, ConvertDTB: s.convert, SystemImage: s.system, SystemAccepted: s.systemAccepted}
 	req.DTBFile = s.dtbFile
 	req.DTBManifest = s.dtbManifest
@@ -1109,6 +1111,7 @@ func (s *screen) write(p *flash.Plan) {
 				outcome.SetText(s.t("Technical details") + ": " + e.Error() + s.failureHints(e))
 				outcome.Importance = widget.DangerImportance
 				outcome.Show()
+				copyBox.Add(s.copyDetails(e))
 				if result.Backup != "" {
 					details.SetText(s.t("Recovery backups") + ": " + result.Backup)
 				}

@@ -215,7 +215,7 @@ func Open(d Drive, write bool) (*Handle, error) {
 	}
 	if e != nil || int64(size) != d.Size {
 		f.Close()
-		return nil, fmt.Errorf("card capacity changed")
+		return nil, errCapacityChanged
 	}
 	return &Handle{File: f, Cleanup: func() {
 		if write {

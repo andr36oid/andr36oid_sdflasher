@@ -2,6 +2,7 @@ package platform
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -28,7 +29,14 @@ func Eject(d Drive) error {
 			return fmt.Errorf("cannot unmount %s: %s", v, strings.TrimSpace(string(b)))
 		}
 	}
-	unix.Sync()
+	// the card's own buffers; a sync of everything can hang for minutes on a computer
+	// with a slow network or USB disk, so only when the card can't be opened
+	if f, e := os.Open(d.Path); e == nil {
+		f.Sync()
+		f.Close()
+	} else {
+		unix.Sync()
+	}
 	if udisks {
 		exec.Command("udisksctl", "power-off", "--no-user-interaction", "-b", d.Path).Run()
 	}

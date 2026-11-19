@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 )
 
 const Repository = "andr36oid/releases"
@@ -36,7 +37,28 @@ type release struct {
 	Assets    []Asset   `json:"assets"`
 }
 
-func client() *http.Client { return &http.Client{Timeout: 30 * time.Minute} }
+// releaseList is GitHub's list of releases for req, within lookupTimeout.
+func releaseList(req *http.Request) ([]release, error) {
+	ctx, cancel := context.WithTimeout(req.Context(), lookupTimeout)
+	defer cancel()
+	resp, e := client().Do(req.WithContext(ctx))
+	if e != nil {
+		return nil, e
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, statusError(resp)
+	}
+	var rel []release
+	if e = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&rel); e != nil {
+		if ctx.Err() != nil {
+			return nil, e
+		}
+		return nil, i18n.Detailed(ErrReleaseList.New(), e)
+	}
+	return rel, nil
+}
+
 func List(ctx context.Context) ([]Asset, error) {
 	var out []Asset
 	for page := 1; page <= 10; page++ {
@@ -46,17 +68,7 @@ func List(ctx context.Context) ([]Asset, error) {
 		}
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("User-Agent", "andr36oid-sdflasher")
-		resp, e := client().Do(req)
-		if e != nil {
-			return nil, e
-		}
-		if resp.StatusCode != 200 {
-			resp.Body.Close()
-			return nil, fmt.Errorf("GitHub returned %s", resp.Status)
-		}
-		var rel []release
-		e = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&rel)
-		resp.Body.Close()
+		rel, e := releaseList(req)
 		if e != nil {
 			return nil, e
 		}
@@ -130,7 +142,7 @@ func downloadRelease(ctx context.Context, a Asset, repository, dir string, progr
 	digest := strings.TrimPrefix(a.Digest, "sha256:")
 	sum, err := hex.DecodeString(digest)
 	if err != nil || len(sum) != sha256.Size {
-		return "", errors.New("this release has no SHA-256 digest; download it manually and select the local image")
+		return "", i18n.Detailed(ErrNoDigest.New(), errors.New("no SHA-256 digest for "+a.Name))
 	}
 	digest = strings.ToLower(digest)
 	if e := os.MkdirAll(dir, 0700); e != nil {
@@ -156,18 +168,6 @@ func downloadRelease(ctx context.Context, a Asset, repository, dir string, progr
 	if e := spaceFor(dir, a.Size); e != nil {
 		return "", e
 	}
-	req, e := http.NewRequestWithContext(ctx, "GET", a.URL, nil)
-	if e != nil {
-		return "", e
-	}
-	resp, e := client().Do(req)
-	if e != nil {
-		return "", e
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("download returned %s", resp.Status)
-	}
 	f, e := os.CreateTemp(dir, "download-*")
 	if e != nil {
 		return "", e
@@ -176,32 +176,67 @@ func downloadRelease(ctx context.Context, a Asset, repository, dir string, progr
 	defer os.Remove(tmp)
 	defer f.Close()
 	h := sha256.New()
-	w := io.MultiWriter(f, h)
-	buf := make([]byte, 1<<20)
 	var n int64
-	for {
-		read, re := resp.Body.Read(buf)
-		if read > 0 {
-			n += int64(read)
-			if n > a.Size {
-				return "", errors.New("download exceeds expected size")
-			}
-			if _, e = w.Write(buf[:read]); e != nil {
-				return "", e
-			}
-			if progress != nil {
-				progress(n, a.Size)
-			}
-		}
-		if re == io.EOF {
+	// a broken or stalled connection is resumed where it stopped (or started again
+	// when the server can't resume), up to downloadTries times
+	var last error
+	for try := 0; try < downloadTries && n < a.Size; try++ {
+		if try > 0 && !pause(ctx) {
 			break
 		}
-		if re != nil {
-			return "", re
+		body, resumed, stop, e := fetchRange(ctx, a.URL, n)
+		if e != nil {
+			if !retryable(ctx, e) {
+				return "", e
+			}
+			last = e
+			continue
 		}
+		if n > 0 && !resumed {
+			// the whole file again
+			if _, e = f.Seek(0, io.SeekStart); e == nil {
+				e = f.Truncate(0)
+			}
+			if e != nil {
+				stop()
+				return "", e
+			}
+			h.Reset()
+			n = 0
+		}
+		written, e := receive(body, f, h, n, a.Size, progress)
+		stop()
+		n = written
+		if e == nil {
+			break
+		}
+		if errors.Is(e, errTooLong) {
+			return "", i18n.Detailed(ErrDamagedDownload.New(), e)
+		}
+		if errors.Is(e, errWriteFile) || !retryable(ctx, e) {
+			return "", e
+		}
+		last = e
 	}
-	if n != a.Size || hex.EncodeToString(h.Sum(nil)) != digest {
-		return "", errors.New("download checksum mismatch")
+	if e := ctx.Err(); e != nil {
+		return "", e
+	}
+	if n != a.Size {
+		if last == nil {
+			last = fmt.Errorf("%d of %d bytes", n, a.Size)
+		}
+		if errors.Is(last, errStallTimer) {
+			return "", i18n.Detailed(ErrStalled.New(), last)
+		}
+		var m *i18n.Error
+		if errors.As(last, &m) || n == 0 && !errors.Is(last, io.ErrUnexpectedEOF) {
+			// nothing came: the connection's own error says why (i18n's causes)
+			return "", last
+		}
+		return "", i18n.Detailed(ErrCutOff.New(), last)
+	}
+	if hex.EncodeToString(h.Sum(nil)) != digest {
+		return "", i18n.Detailed(ErrDamagedDownload.New(), errors.New("download checksum mismatch: "+a.Name))
 	}
 	if e = f.Sync(); e != nil {
 		return "", e
@@ -213,4 +248,42 @@ func downloadRelease(ctx context.Context, a Asset, repository, dir string, progr
 		return "", e
 	}
 	return final, nil
+}
+
+// errWriteFile marks a failed write of the download to its file (a full disk): it is
+// not resumed.
+var errWriteFile = errors.New("could not save the download")
+
+// errTooLong: the server sent more than the release says the file has.
+var errTooLong = errors.New("download exceeds expected size")
+
+// receive appends body to f and h from n bytes on, and returns how many bytes of the
+// size there are then.
+func receive(body io.Reader, f io.Writer, h io.Writer, n, size int64, progress func(int64, int64)) (int64, error) {
+	buf := make([]byte, 1<<20)
+	for {
+		read, re := body.Read(buf)
+		if read > 0 {
+			if n+int64(read) > size {
+				return n, errTooLong
+			}
+			if _, e := f.Write(buf[:read]); e != nil {
+				return n, fmt.Errorf("%w: %w", errWriteFile, e)
+			}
+			h.Write(buf[:read])
+			n += int64(read)
+			if progress != nil {
+				progress(n, size)
+			}
+		}
+		if re == io.EOF {
+			if n < size {
+				return n, io.ErrUnexpectedEOF
+			}
+			return n, nil
+		}
+		if re != nil {
+			return n, re
+		}
+	}
 }

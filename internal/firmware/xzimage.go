@@ -155,7 +155,7 @@ func xzLayoutOf(f io.ReaderAt, size int64) (*xzLayout, error) {
 		at += (int64(unpadded) + 3) &^ 3
 		l.size += int64(uncompressed)
 		if l.size > MaxImageSize {
-			return nil, errors.New("image is too large")
+			return nil, errTooLarge()
 		}
 	}
 	// what is left is the index padding, which must be zero
@@ -202,7 +202,7 @@ func copyCtx(ctx context.Context, w io.Writer, r io.Reader, limit int64, done *a
 		if m > 0 {
 			n += int64(m)
 			if n > limit {
-				return n, errors.New("expanded image exceeds limit")
+				return n, errTooLarge()
 			}
 			if _, e := w.Write(buf[:m]); e != nil {
 				return n, e

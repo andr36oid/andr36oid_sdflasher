@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 )
 
 const MaxImageSize int64 = 32 << 30
@@ -24,18 +26,19 @@ func Load(ctx context.Context, src, dir string, progress func(int64, int64)) (*I
 	digest := sha256.New()
 	staged, err := stage(ctx, src, dir, progress, digest)
 	if err != nil {
-		return nil, err
+		return nil, imageError(err, true)
 	}
 	if staged == src {
-		return Inspect(ctx, src, progress)
+		im, err := Inspect(ctx, src, progress)
+		return im, imageError(err, false)
 	}
 	im, err := inspect(ctx, staged, nil, hex.EncodeToString(digest.Sum(nil)))
 	if err != nil {
 		os.Remove(staged)
-	} else {
-		im.Source = src
+		return nil, imageError(err, false)
 	}
-	return im, err
+	im.Source = src
+	return im, nil
 }
 
 // Stage expands exactly one image. ZIP CRC and XZ block checks complete before the file is accepted.
@@ -54,7 +57,7 @@ func stage(ctx context.Context, src, dir string, progress func(int64, int64), di
 		return stageGzip(ctx, src, dir, progress, digest)
 	}
 	if !strings.EqualFold(filepath.Ext(src), ".zip") {
-		return "", errors.New("choose an .img, .img.xz, .img.gz or .img.zip release image")
+		return "", i18n.Detailed(ErrImageType.New(), errors.New(filepath.Base(src)))
 	}
 	z, e := zip.OpenReader(src)
 	if e != nil {
@@ -65,16 +68,16 @@ func stage(ctx context.Context, src, dir string, progress func(int64, int64), di
 	for _, f := range z.File {
 		if strings.EqualFold(filepath.Ext(f.Name), ".img") {
 			if entry != nil {
-				return "", errors.New("archive contains multiple images")
+				return "", i18n.Detailed(ErrNotRelease.New(), errors.New("archive contains multiple images"))
 			}
 			entry = f
 		}
 	}
 	if entry == nil {
-		return "", errors.New("archive contains no disk image; recovery OTA packages are not supported")
+		return "", i18n.Detailed(ErrNotRelease.New(), errors.New("archive contains no disk image; recovery OTA packages are not supported"))
 	}
 	if entry.UncompressedSize64 > uint64(MaxImageSize) {
-		return "", errors.New("image is too large")
+		return "", errTooLarge()
 	}
 	if e = CheckSpace(dir, int64(entry.UncompressedSize64)); e != nil {
 		return "", e
@@ -113,7 +116,7 @@ func stage(ctx context.Context, src, dir string, progress func(int64, int64), di
 		if n > 0 {
 			written += int64(n)
 			if written > MaxImageSize {
-				return "", errors.New("expanded image exceeds limit")
+				return "", errTooLarge()
 			}
 			if _, e = out.Write(buf[:n]); e != nil {
 				return "", e
@@ -199,7 +202,7 @@ func stageGzip(ctx context.Context, src, dir string, progress func(int64, int64)
 		n, re := z.Read(buf)
 		if n > 0 {
 			if written += int64(n); written > MaxImageSize {
-				return "", errors.New("expanded image exceeds limit")
+				return "", errTooLarge()
 			}
 			if _, e = out.Write(buf[:n]); e != nil {
 				return "", e

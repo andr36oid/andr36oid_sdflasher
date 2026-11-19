@@ -8,6 +8,7 @@ import (
 	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/flash"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/layout"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/platform"
 	"io"
@@ -597,11 +598,15 @@ func Run(req Request, onProgress func(flash.Progress)) (Result, error) {
 			poll()
 		case e := <-ch:
 			poll()
+			if latest.Done && latest.Error != "" {
+				// the helper said what went wrong before it ended
+				return latest, flash.NewFailure(latest.ErrorKind, errors.New(latest.Error))
+			}
 			if e != nil {
-				return latest, stopped(fmt.Errorf("administrator access was denied or the helper stopped: %w", e))
+				return latest, stopped(i18n.Detailed(i18n.CauseHelperStopped.New(), fmt.Errorf("administrator access was denied or the helper stopped: %w", e)))
 			}
 			if !latest.Done {
-				return latest, stopped(fmt.Errorf("disk helper ended without a result; recovery files, if present, are in %s", dir))
+				return latest, stopped(i18n.Detailed(i18n.CauseHelperStopped.New(), fmt.Errorf("disk helper ended without a result; recovery files, if present, are in %s", dir)))
 			}
 			if latest.Error != "" {
 				return latest, flash.NewFailure(latest.ErrorKind, errors.New(latest.Error))

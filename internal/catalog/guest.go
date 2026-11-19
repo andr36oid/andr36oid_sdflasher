@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 	"github.com/xi2/xz"
 )
 
@@ -279,16 +280,8 @@ func LatestGuest(ctx context.Context, src GuestSource) (*GuestRelease, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "andr36oid-sdflasher")
-	resp, e := client().Do(req)
+	rel, e := releaseList(req)
 	if e != nil {
-		return nil, e
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("GitHub returned %s", resp.Status)
-	}
-	var rel []release
-	if e = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&rel); e != nil {
 		return nil, e
 	}
 	r := pickGuest(src, rel)
@@ -329,21 +322,26 @@ func fetchSmall(ctx context.Context, a Asset) ([]byte, error) {
 	if e != nil {
 		return nil, e
 	}
-	resp, e := client().Do(req)
+	ctx, cancel := context.WithTimeout(ctx, lookupTimeout)
+	defer cancel()
+	resp, e := client().Do(req.WithContext(ctx))
 	if e != nil {
 		return nil, e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("download returned %s", resp.Status)
+		return nil, statusError(resp)
 	}
 	b, e := io.ReadAll(io.LimitReader(resp.Body, a.Size+1))
 	if e != nil {
 		return nil, e
 	}
 	sum := sha256.Sum256(b)
+	if int64(len(b)) < a.Size {
+		return nil, i18n.Detailed(ErrCutOff.New(), fmt.Errorf("%s: %d of %d bytes", a.Name, len(b), a.Size))
+	}
 	if int64(len(b)) != a.Size || "sha256:"+hex.EncodeToString(sum[:]) != a.Digest {
-		return nil, errors.New("download checksum mismatch")
+		return nil, i18n.Detailed(ErrDamagedDownload.New(), errors.New("download checksum mismatch: "+a.Name))
 	}
 	return b, nil
 }

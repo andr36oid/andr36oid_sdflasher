@@ -128,7 +128,16 @@ func TestMessagesAreTranslatable(t *testing.T) {
 	if got := Explain("en", "write failed: "+msg); got != "This card is not the size it claims (it reports 31.9 GB, but only about 8.6 GB works). It cannot be used." {
 		t.Fatal(got)
 	}
-	if Explain("de", "input/output error") != "" {
-		t.Fatal("a technical error explained")
+	// a bare system error is explained by its cause (i18n.NewCause), never shown alone
+	if got := Explain("en", "write /dev/block/sda: input/output error"); got != i18n.CauseDeviceGone.Key() {
+		t.Fatal("a system error left unexplained:", got)
+	}
+	if Explain("de", "something only a developer knows") != "" {
+		t.Fatal("an unknown error explained")
+	}
+	// what a failed write left the card like follows the message
+	state := fmt.Errorf("%w; %w", errors.New("read /dev/sdb: input/output error"), flash.StateIncomplete.New()).Error()
+	if got := Explain("en", state); got != i18n.CauseDeviceGone.Key()+"\n\n"+flash.StateIncomplete.Key() {
+		t.Fatal(got)
 	}
 }

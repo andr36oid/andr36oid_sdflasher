@@ -274,7 +274,7 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 	for i, w := range p.Writes {
 		for _, r := range [][2]int64{{0, min(sample, w.Length)}, {max(0, w.Length-sample), min(sample, w.Length)}} {
 			if _, e = firmware.Hash(ctx, io.NewSectionReader(dst, w.Offset+r[0], r[1]), r[1], nil); e != nil {
-				return fmt.Errorf("card read check failed: %w", e)
+				return fmt.Errorf("card read check failed: %w; %w", e, StateUntouched.New())
 			}
 		}
 		notify(Progress{Phase: "preflight", Name: "Reading the card before writing", Done: int64(i + 1), Total: int64(len(p.Writes))})
@@ -288,14 +288,14 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 			if Classify(e) == FailureCapacity {
 				return e
 			}
-			return fmt.Errorf("%w; installation is incomplete, run Install again before using the card", e)
+			return fmt.Errorf("%w; %w", e, StateIncomplete.New())
 		}
 	}
 	var backup *Backup
 	if p.Mode == "update" {
 		backup, e = saveBackup(ctx, dst, p, backupDir, notify)
 		if e != nil {
-			return fmt.Errorf("recovery backup failed; no card bytes were written: %w", e)
+			return fmt.Errorf("recovery backup failed: %w; %w", e, StateUntouched.New())
 		}
 	}
 	sourceFor := func(w Write) (io.ReaderAt, int64) {
@@ -329,11 +329,11 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 		if backup != nil {
 			notify(Progress{Phase: "restoring", Name: "Restoring the previous installation"})
 			if e := restore(context.Background(), dst, backupDir, backup); e != nil {
-				return fmt.Errorf("%w; %w: %v. Keep the card out of the console. Recovery backup: %s", cause, ErrRestoreFailed, e, backupDir)
+				return fmt.Errorf("%w; %w: %v; %w", cause, ErrRestoreFailed, e, StateRestoreFailed.New(backupDir))
 			}
-			return fmt.Errorf("%w; the previous installation was restored and verified", cause)
+			return fmt.Errorf("%w; %w", cause, StateRestored.New())
 		}
-		return fmt.Errorf("%w; installation is incomplete, run Install again before using the card", cause)
+		return fmt.Errorf("%w; %w", cause, StateIncomplete.New())
 	}
 	notify(Progress{Phase: "preflight", Name: SpeedCheck})
 	speed, e := measureLatency(ctx, dst, p)

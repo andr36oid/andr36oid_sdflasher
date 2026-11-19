@@ -158,7 +158,7 @@ func Open(d Drive, write bool) (*Handle, error) {
 	if e = windows.DeviceIoControl(h, 0x7405c, nil, 0, (*byte)(unsafe.Pointer(&size)), 8, &n, nil); e != nil || size != d.Size {
 		windows.CloseHandle(h)
 		cleanup()
-		return nil, fmt.Errorf("card capacity changed")
+		return nil, errCapacityChanged
 	}
 	if write {
 		// Preferred path: take the whole disk offline. This clears every mounted

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 )
@@ -103,6 +104,36 @@ var (
 	ErrGuestInTheWay = i18n.NewFormat("The new release needs room on the card that its game system uses, so this card can't be updated. Write it again with a new installation instead.")
 	// ErrRestoreFailed marks an update whose automatic restore failed.
 	ErrRestoreFailed = errors.New("automatic restore failed")
+)
+
+// The causes of failures that the write's own checks find (i18n.NewCause): they
+// explain the shorter texts of these errors.
+var (
+	// CauseImageChanged: the image file is not what was checked when it was chosen.
+	CauseImageChanged = i18n.NewCause("The image file changed after it was checked: it was moved or overwritten, or its download was still running. Choose the image again.",
+		func(s string) bool { return strings.Contains(s, "source image changed") })
+	// CauseVerify: the read-back of the card is not what was written (verify).
+	CauseVerify = i18n.NewCause("What the card gave back is not what was written to it: the card or the card reader does not store data reliably.",
+		func(s string) bool { return strings.Contains(s, "read-back mismatch") })
+	// CauseGuestDamaged: the downloaded game system is not what its release lists.
+	CauseGuestDamaged = i18n.NewCause("The downloaded game system is damaged. Start again: it is then downloaded once more.",
+		func(s string) bool {
+			return strings.Contains(s, "game system download is damaged") || strings.Contains(s, "game system download is not the size")
+		})
+)
+
+// What a failed write left the card like: the apps show it after the error's own
+// message (i18n.NewState).
+var (
+	// StateIncomplete: an installation stopped after it had begun to write.
+	StateIncomplete = i18n.NewState("Writing stopped. The card is incomplete and has to be written again before you use it.")
+	// StateUntouched: the write stopped before its first byte went to the card.
+	StateUntouched = i18n.NewState("Nothing was written to the card.")
+	// StateRestored: a failed update put the card back as it was.
+	StateRestored = i18n.NewState("The previous installation was restored and verified.")
+	// StateRestoreFailed: a failed update could not put the card back; the argument
+	// is the recovery backup's folder.
+	StateRestoreFailed = i18n.NewState("The card could not be put back as it was before the update. Keep it out of the console, and put it back with \"Restore an interrupted update\" and the recovery backup (%s).")
 )
 
 // gigabytes is a card size as the apps show it.

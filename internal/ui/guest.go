@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -324,7 +325,8 @@ func (s *screen) withGuest(then func(*flash.Guest)) {
 				return
 			}
 			if e != nil {
-				s.showError(e)
+				// the download comes before the card is touched
+				s.showError(fmt.Errorf("%w; %w", e, flash.StateUntouched.New()))
 				return
 			}
 			then(flashGuest(g, path))

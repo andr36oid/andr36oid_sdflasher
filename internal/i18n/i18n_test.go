@@ -17,13 +17,23 @@ func TestLocaleSelection(t *testing.T) {
 }
 func TestCatalogsComplete(t *testing.T) {
 	format := regexp.MustCompile(`%[-+# 0-9.]*[a-zA-Z%]`)
+	for key := range awaitingTranslation {
+		if _, ok := catalogs["en"][key]; !ok {
+			t.Errorf("awaiting translation, but not in en.json: %q", key)
+		}
+	}
 	for _, l := range Languages {
 		m := catalogs[l.Code]
-		if len(m) != len(catalogs["en"]) {
-			t.Errorf("%s: different number of keys", l.Code)
+		for key := range m {
+			if _, ok := catalogs["en"][key]; !ok {
+				t.Errorf("%s has %q, which en.json has not", l.Code, key)
+			}
 		}
 		for key, english := range catalogs["en"] {
 			value, ok := m[key]
+			if !ok && awaitingTranslation[key] {
+				continue
+			}
 			if !ok || strings.TrimSpace(value) == "" {
 				t.Errorf("%s missing %q", l.Code, key)
 			}

@@ -28,7 +28,7 @@ func runDTBs(o opts, args []string) int {
 	}
 	p, e := firmware.ReadDTBPack(args[1])
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	if args[0] == "info" {
@@ -46,18 +46,18 @@ func runDTBs(o opts, args []string) int {
 	}
 	d, e := pickDrive(o.in, o.all, args[2])
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	info, e := jobs.Run(jobs.Request{Action: "dtb-info", Drive: d}, nil)
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	req := jobs.Request{Action: "dtb-plan", Drive: d, DTBFile: args[1], DTBExpected: info.BuildIdentity, CardFingerprint: info.Card.Fingerprint, DTBOptions: firmware.DTBOptions{Profile: o.profile, ReplaceAnyway: o.replaceDTBs}}
 	planned, e := jobs.Run(req, nil)
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	if planned.DTBPlan.Already && !planned.DTBPlan.Manual {
@@ -79,7 +79,7 @@ func runDTBs(o opts, args []string) int {
 	req.Action = "dtb-apply"
 	_, e = jobs.Run(req, func(p flash.Progress) { printProgress(p) })
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	fmt.Println("Device trees updated.")
@@ -98,7 +98,7 @@ func cliConfirmDTBScreen(o opts, changed bool) bool {
 func runDTBUndo(o opts) int {
 	drive, e := pickDrive(o.in, o.all, o.drive)
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	return undoDTBOnDrive(o, drive, jobs.Run)
@@ -108,7 +108,7 @@ func runDTBUndo(o opts) int {
 func undoDTBOnDrive(o opts, drive platform.Drive, runJob func(jobs.Request, func(flash.Progress)) (jobs.Result, error)) int {
 	info, e := runJob(jobs.Request{Action: "dtb-info", Drive: drive}, nil)
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	if info.Setup == nil || len(info.Setup.History) == 0 {
@@ -122,7 +122,7 @@ func undoDTBOnDrive(o opts, drive platform.Drive, runJob func(jobs.Request, func
 	req := jobs.Request{Action: "dtb-restore-plan", Drive: drive, DTBExpected: info.BuildIdentity, CardFingerprint: info.Card.Fingerprint}
 	planned, e := runJob(req, nil)
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	if planned.DTBPlan == nil {
@@ -138,7 +138,7 @@ func undoDTBOnDrive(o opts, drive platform.Drive, runJob func(jobs.Request, func
 	req.DTBOptions.ScreenAccepted = planned.DTBPlan.ScreenChanged
 	req.Action = "dtb-restore"
 	if _, e = runJob(req, func(p flash.Progress) { printProgress(p) }); e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 1
 	}
 	fmt.Println("Previous device trees are back.")

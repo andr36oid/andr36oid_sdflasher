@@ -275,10 +275,11 @@ func serial() uint32 {
 // as in minimum_andr36oid) whose console reads "distribution" in GuestFile and so can
 // run dArkOS and dArkOSRE from the partition. Older consoles reject the field.
 //
-// PLACEHOLDER: the owner fills this in once that build is known. While it is empty no
-// release counts as new enough: only dArkOSen (written without the field, as before)
-// is offered.
-const MinimumDistributionBuild = ""
+// It is candidate 11 (eng.kenny.20261119.021722, the tester build of 19 November
+// 2026): its erofs-tools reader is the first that takes the field. For older builds
+// (rc1-beta1 = candidate 9 among them) only dArkOSen, written without the field as
+// before, is offered. Set to "" and no release counts as new enough.
+const MinimumDistributionBuild = "20261119.021722"
 
 // ErrGuestNeedsNewerRelease: the system can't go on a card with this andr36oid
 // release, which is too old to run it.

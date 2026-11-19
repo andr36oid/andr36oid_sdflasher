@@ -208,7 +208,7 @@ func run(version string, args []string, intro func()) (code int) {
 
 	cache, err := jobs.CacheDir()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Cannot create a work directory:", err)
+		printFailure("Cannot create a work directory.", err)
 		return 1
 	}
 	// Same housekeeping as the graphical app at start: drop staging scratch an
@@ -278,7 +278,7 @@ func run(version string, args []string, intro func()) (code int) {
 func runList(o opts) int {
 	drives, err := listDrives(o.all)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Could not list drives:", err)
+		printFailure("Could not list drives.", err)
 		return 1
 	}
 	if len(drives) == 0 {
@@ -301,7 +301,7 @@ func runFlash(o opts) int {
 	if path == "" && o.download {
 		p, err := downloadRelease(o.in, o.cache)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			printFailure("", err)
 			return 1
 		}
 		path = p
@@ -311,7 +311,7 @@ func runFlash(o opts) int {
 		if path == "" {
 			p, err := downloadRelease(o.in, o.cache)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				printFailure("", err)
 				return 1
 			}
 			path = p
@@ -326,18 +326,18 @@ func runFlash(o opts) int {
 	im, err := firmware.Load(ctx, path, o.cache, barProgress("verify"))
 	fmt.Println()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Could not read the image:", err)
+		printFailure("Could not read the image.", err)
 		return 1
 	}
 	if o.dtbFile != "" {
 		pack, e := firmware.ReadDTBPack(o.dtbFile)
 		if e != nil {
-			fmt.Fprintln(os.Stderr, e)
+			printFailure("", e)
 			return 1
 		}
 		im, e = firmware.ImageWithDTBPack(im, pack, o.cache)
 		if e != nil {
-			fmt.Fprintln(os.Stderr, e)
+			printFailure("", e)
 			return 1
 		}
 		fmt.Println("Using device trees from", im.DTBVersion)
@@ -348,7 +348,7 @@ func runFlash(o opts) int {
 	section(2, "Card")
 	drive, err := pickDrive(o.in, o.all, o.drive)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		printFailure("", err)
 		return 1
 	}
 
@@ -357,7 +357,7 @@ func runFlash(o opts) int {
 	fmt.Println("Inspecting the card...")
 	res, err := jobs.Run(jobs.Request{Action: "inspect", Drive: drive}, nil)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Could not inspect the card:", err)
+		printFailure("Could not inspect the card.", err)
 		return 1
 	}
 	card := res.Card
@@ -376,7 +376,7 @@ func runFlash(o opts) int {
 	section(3, "Console")
 	profile, err := chooseProfile(o.in, im.Profiles, o.profile)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		printFailure("", err)
 		return 1
 	}
 	if profile == "" {
@@ -419,7 +419,7 @@ func runFlash(o opts) int {
 		fmt.Println("Looking for game systems...")
 		guestRelease, err = chooseGuest(o.in, lookupGuests(im, drive.Size, userdataGiB, noROMs), o.gameSystem, o.assumeYes)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			printFailure("", err)
 			return 1
 		}
 		fmt.Println()
@@ -474,7 +474,7 @@ func runFlash(o opts) int {
 	// 7. Write.
 	loaderChoice, e := cliBootloader(o)
 	if e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		printFailure("", e)
 		return 2
 	}
 	if loaderChoice != nil && !((drive.Fixed || card.DataCard) && !loaderChoice.Changed()) {
@@ -483,14 +483,14 @@ func runFlash(o opts) int {
 			target.Storage = "emmc"
 		}
 		if e = cliCheckBootOptions(*loaderChoice, target); e != nil {
-			fmt.Fprintln(os.Stderr, e)
+			printFailure("", e)
 			return 1
 		}
 	}
 	var guest *flash.Guest
 	if guestRelease != nil {
 		if guest, e = downloadGuest(guestRelease, o.cache); e != nil {
-			fmt.Fprintln(os.Stderr, "Could not download "+guestRelease.Source.Display+":", e)
+			printFailure("Could not download "+guestRelease.Source.Display+".", fmt.Errorf("%w; %w", e, flash.StateUntouched.New()))
 			return 1
 		}
 	}
@@ -517,11 +517,7 @@ func runFlash(o opts) int {
 		if what, busy := platform.Busy(err.Error()); busy {
 			fmt.Fprintln(os.Stderr, "The card is in use ("+what+"). Close anything using it and try again.")
 		} else {
-			fmt.Fprintln(os.Stderr, "The write failed:", err)
-			if hints := failureHints(err); len(hints) > 0 {
-				fmt.Fprintln(os.Stderr)
-				fmt.Fprintln(os.Stderr, strings.Join(hints, "\n"))
-			}
+			printFailure("The write failed.", err)
 		}
 		if result.Backup != "" {
 			fmt.Fprintln(os.Stderr, "Recovery backup, if the card already had an install:", result.Backup)
@@ -552,7 +548,7 @@ func runHotfix(o opts) int {
 	section(1, "Card")
 	drive, err := pickDrive(o.in, o.all, o.drive)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		printFailure("", err)
 		return 1
 	}
 
@@ -561,13 +557,13 @@ func runHotfix(o opts) int {
 	fmt.Println("Reading the card's build and checking for hotfixes...")
 	listed, err := jobs.Run(jobs.Request{Action: "hotfix-list", Drive: drive}, nil)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Could not read the card:", err)
+		printFailure("Could not read the card.", err)
 		return 1
 	}
 	ctx := context.Background()
 	index, err := firmware.FetchHotfixIndex(ctx, firmware.HotfixIndexURL)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		printFailure("", err)
 		return 1
 	}
 	offer := index.ForBuild(listed.BuildIdentity)
@@ -586,7 +582,7 @@ func runHotfix(o opts) int {
 	applied, err := jobs.Run(jobs.Request{Action: "hotfix-apply", Drive: drive, HotfixOffer: offer, HotfixFiles: selected}, func(p flash.Progress) { printProgress(p) })
 	fmt.Println()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Applying hotfixes failed:", err)
+		printFailure("Applying hotfixes failed.", err)
 		return 1
 	}
 	if len(applied.HotfixResults) == 0 {
@@ -619,7 +615,7 @@ func runKernel(o opts) int {
 	section(1, "Card")
 	drive, err := pickDrive(o.in, o.all, o.drive)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		printFailure("", err)
 		return 1
 	}
 
@@ -628,7 +624,7 @@ func runKernel(o opts) int {
 	fmt.Println("Reading the card's kernel and checking for updates...")
 	listed, err := jobs.Run(jobs.Request{Action: "kernel-list", Drive: drive}, nil)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Could not read the card's kernel:", err)
+		printFailure("Could not read the card's kernel.", err)
 		return 1
 	}
 	if listed.KernelIdentity == nil {
@@ -638,7 +634,7 @@ func runKernel(o opts) int {
 	ctx := context.Background()
 	offer, err := catalog.CheckKernelUpdate(ctx, *listed.KernelIdentity)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Could not check for kernel updates:", err)
+		printFailure("Could not check for kernel updates.", err)
 		return 1
 	}
 	if offer == nil || !firmware.KernelCompatible(offer.CompatibleBuilds, offer.Current.Build) {
@@ -662,7 +658,7 @@ func runKernel(o opts) int {
 	_, err = jobs.Run(jobs.Request{Action: "kernel-apply", Drive: drive, KernelOffer: offer}, func(p flash.Progress) { printProgress(p) })
 	fmt.Println()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Kernel update could not finish:", err)
+		printFailure("Kernel update could not finish.", err)
 		return 1
 	}
 	fmt.Println("Kernel update installed and verified.")
@@ -679,14 +675,14 @@ func runRestore(o opts) int {
 	section(1, "Card")
 	drive, err := pickDrive(o.in, o.all, o.drive)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		printFailure("", err)
 		return 1
 	}
 
 	section(2, "Recovery backup")
 	dir, err := resolveRecovery(o.in, o.recovery)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		printFailure("", err)
 		return 1
 	}
 	fmt.Println("Restore the saved operating system? Userdata and games remain protected.")
@@ -701,7 +697,7 @@ func runRestore(o opts) int {
 	_, err = jobs.Run(jobs.Request{Action: "restore", Drive: drive, Recovery: dir}, func(p flash.Progress) { printProgress(p) })
 	fmt.Println()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "The restore failed:", err)
+		printFailure("The restore failed.", err)
 		return 1
 	}
 	fmt.Println("The previous installation was restored and verified.")

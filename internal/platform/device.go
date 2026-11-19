@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 )
 
 type Drive struct {
@@ -28,6 +30,19 @@ type Drive struct {
 // WriteProtectedReason is why a write-protected card can't be chosen (an en.json
 // key; the apps translate it).
 const WriteProtectedReason = "write-protected: slide the lock switch on the card or adapter"
+
+// The messages of a card that can't be opened (the apps translate them).
+var (
+	// ErrCardChanged: the chosen card is gone, or another one is in its place.
+	ErrCardChanged = i18n.NewCause("The card was removed or changed after it was chosen. Insert it again, choose it in the list once more, then try again.",
+		func(s string) bool {
+			return strings.Contains(s, "card changed") || strings.Contains(s, "card contents changed") || strings.Contains(s, "no longer safe to open")
+		})
+	// ErrSectorSize: the reader reports sectors of another size than 512 bytes.
+	ErrSectorSize = i18n.NewFormat("This card reader reports a sector size the flasher cannot write (only 512-byte sectors work). Use a different card reader.")
+	// errCapacityChanged: the card reports another size when it is opened.
+	errCapacityChanged = i18n.Detailed(ErrCardChanged.New(), errors.New("card capacity changed"))
+)
 
 // errWriteProtected: Open for writing refused a write-protected card.
 var errWriteProtected = errors.New("the card is write-protected")
@@ -100,7 +115,7 @@ func Revalidate(want Drive) (Drive, error) {
 	for _, d := range ds {
 		if Same(d, want) {
 			if d.SectorSize != 512 {
-				return d, errors.New("only 512-byte logical sectors are supported")
+				return d, i18n.Detailed(ErrSectorSize.New(), fmt.Errorf("%d-byte logical sectors; only 512-byte logical sectors are supported", d.SectorSize))
 			}
 			return d, nil
 		}
@@ -108,7 +123,7 @@ func Revalidate(want Drive) (Drive, error) {
 			why = " (" + d.Path + " now has " + difference(d, want) + ")"
 		}
 	}
-	return Drive{}, errors.New("the selected card was removed, changed, or is no longer safe to open" + why)
+	return Drive{}, i18n.Detailed(ErrCardChanged.New(), errors.New("the selected card was removed, changed, or is no longer safe to open"+why))
 }
 
 type Handle struct {
