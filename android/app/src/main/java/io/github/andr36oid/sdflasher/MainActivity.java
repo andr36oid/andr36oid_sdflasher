@@ -877,6 +877,8 @@ public final class MainActivity extends Activity {
 
   /** The profile's own console, or one it is also listed under (a V12 wired like the G80). */
   private static boolean listedFor(JSONObject p, String family) {
+    // a copy at a board's old folder, kept for older flashers: never offered
+    if (p.optBoolean("hidden")) return false;
     if (p.optString("console").equals(family)) return true;
     JSONArray also = p.optJSONArray("also_for");
     for (int i = 0; also != null && i < also.length(); i++) {
@@ -894,6 +896,7 @@ public final class MainActivity extends Activity {
     JSONArray ps = WorkState.image.optJSONArray("profiles");
     for (int n = 0; n < ps.length(); n++) {
       JSONObject p = ps.optJSONObject(n);
+      if (p.optBoolean("hidden")) continue;
       names.add(p.optString("console"));
       JSONArray also = p.optJSONArray("also_for");
       for (int i = 0; also != null && i < also.length(); i++) names.add(also.optString(i));
@@ -2214,7 +2217,7 @@ public final class MainActivity extends Activity {
     JSONArray profiles=plan.optJSONArray("profiles");if(profiles==null)return;
     JSONObject setup=plan.optJSONObject("setup");String current=setup==null?"":setup.optString("profile");String console="";
     for(int n=0;n<profiles.length();n++){JSONObject p=profiles.optJSONObject(n);if(p!=null&&current.equals(p.optString("id")))console=p.optString("console");}
-    List<JSONObject> known=new ArrayList<>(),all=new ArrayList<>();for(int n=0;n<profiles.length();n++){JSONObject p=profiles.optJSONObject(n);if(p==null)continue;all.add(p);boolean fits=!console.isEmpty()&&console.equals(p.optString("console"));JSONArray aliases=p.optJSONArray("also_for");if(aliases!=null&&!console.isEmpty())for(int a=0;a<aliases.length();a++)if(console.equals(aliases.optString(a)))fits=true;if(fits)known.add(p);}
+    List<JSONObject> known=new ArrayList<>(),all=new ArrayList<>();for(int n=0;n<profiles.length();n++){JSONObject p=profiles.optJSONObject(n);if(p==null||p.optBoolean("hidden"))continue;all.add(p);boolean fits=!console.isEmpty()&&console.equals(p.optString("console"));JSONArray aliases=p.optJSONArray("also_for");if(aliases!=null&&!console.isEmpty())for(int a=0;a<aliases.length();a++)if(console.equals(aliases.optString(a)))fits=true;if(fits)known.add(p);}
     showDTBProfileGroup(known,all,req,previous,false);
   }
   private void showDTBProfileGroup(List<JSONObject> choices,List<JSONObject> all,JSONObject req,AlertDialog previous,boolean expanded){

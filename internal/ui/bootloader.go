@@ -6,6 +6,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -54,7 +55,7 @@ type bootloaderPicker struct {
 	rows                                                           *fyne.Container
 	toggle                                                         *widget.Button
 	controls                                                       [3]*bootDropdown
-	hint, warning, summary                                         *widget.Label
+	hint, summary                                                  *widget.Label
 	rowNotes                                                       [3]*widget.RichText
 	builds                                                         map[string]*firmware.BootloaderBuild
 	choice                                                         firmware.BootloaderChoice
@@ -65,10 +66,12 @@ type bootloaderPicker struct {
 	image, unsupported, loading, loaded, failed, setting, accepted bool
 	imageMainline                                                  bool
 	cardTarget                                                     bool
-	cancel                                                         context.CancelFunc
-	changed                                                        func()
-	lookup                                                         func(context.Context) ([]*firmware.BootloaderBuild, error)
-	lookupOptions                                                  func(context.Context) (*firmware.BootOffers, error)
+	// inline: the rows are shown right away, without the toggle (Options page)
+	inline        bool
+	cancel        context.CancelFunc
+	changed       func()
+	lookup        func(context.Context) ([]*firmware.BootloaderBuild, error)
+	lookupOptions func(context.Context) (*firmware.BootOffers, error)
 }
 
 var loaderChoices = [3]string{"image", "standard", "new"}
@@ -81,22 +84,27 @@ func (s *screen) newBootloaderPicker(choice firmware.BootloaderChoice, changed f
 	p.controls[0] = newBootDropdown(func(id string) { p.choice.Choice = id; p.choice.Build = p.builds[id]; p.updateChoice("bootloader") })
 	p.controls[1] = newBootDropdown(func(id string) { p.choice.Sleep = id; p.updateChoice("sleep") })
 	p.controls[2] = newBootDropdown(func(id string) { p.choice.Chain = id; p.updateChoice("chain") })
-	p.rows = container.NewVBox()
+	// each control with its help directly below it, then its notes (hidden while
+	// there are none)
+	p.rows = container.NewVBox(wrapped(s.t(firmware.BootOptionsHint)))
+	helps := []string{
+		s.t("Which U-Boot the card starts with. Keep \"As in the image\" unless the console doesn't start."),
+		s.t("Runs while the console sleeps and switches it off."),
+		s.t("\"Fully mainline\" replaces the first start-up stage too.") + " " + s.t(loaderTestWarning),
+	}
 	for n, title := range []string{"Bootloader", "Sleep firmware", "Boot chain"} {
 		p.rowNotes[n] = widget.NewRichText()
 		p.rowNotes[n].Wrapping = fyne.TextWrapWord
-		p.rows.Add(container.NewVBox(container.NewBorder(nil, nil, wrapped(s.t(title)), nil, p.controls[n]), p.rowNotes[n]))
-		if n == 1 {
-			p.rows.Add(wrapped(s.t("Runs while the console sleeps and switches it off.")))
-		}
-		if n == 2 {
-			p.rows.Add(wrapped(s.t("\"Fully mainline\" replaces the first start-up stage too.")))
-		}
+		p.rowNotes[n].Hide()
+		// the labels one width, so the three controls line up
+		label := widget.NewLabel(s.t(title))
+		label.Truncation = fyne.TextTruncateEllipsis
+		p.rows.Add(container.New(layout.NewCustomPaddedVBoxLayout(-theme.Padding()),
+			container.NewBorder(nil, nil, container.New(fixedWidth{180}, label), nil, p.controls[n]), wrapped(helps[n]), p.rowNotes[n]))
 	}
 	p.hint = wrapped("")
-	p.warning = wrapped(s.t(loaderTestWarning))
+	p.hint.Hide()
 	p.rows.Add(p.hint)
-	p.rows.Add(p.warning)
 	p.rows.Hide()
 	p.toggle = widget.NewButton(s.t("Advanced boot options"), func() {
 		if p.rows.Visible() {
@@ -109,7 +117,7 @@ func (s *screen) newBootloaderPicker(choice firmware.BootloaderChoice, changed f
 	})
 	p.toggle.SetIcon(theme.MenuExpandIcon())
 	p.summary = wrapped("")
-	p.box = container.NewVBox(p.toggle, wrapped(s.t(firmware.BootOptionsHint)), p.summary, p.rows)
+	p.box = container.NewVBox(p.toggle, p.summary, p.rows)
 	p.refresh()
 	return p
 }
@@ -243,6 +251,11 @@ func (p *bootloaderPicker) refresh() {
 			seg = append(seg, &widget.TextSegment{Text: p.reason(i), Style: style})
 		}
 		p.rowNotes[n].Segments = seg
+		if len(seg) == 0 {
+			p.rowNotes[n].Hide()
+		} else {
+			p.rowNotes[n].Show()
+		}
 		p.rowNotes[n].Refresh()
 	}
 	notes := []string{}
@@ -255,6 +268,11 @@ func (p *bootloaderPicker) refresh() {
 		notes = append(notes, p.s.t(firmware.BootloaderFetchFailed))
 	}
 	p.hint.SetText(strings.Join(notes, "\n"))
+	if len(notes) == 0 {
+		p.hint.Hide()
+	} else {
+		p.hint.Show()
+	}
 
 	if p.choice.Changed() {
 		parts := []string{}
@@ -277,7 +295,10 @@ func (p *bootloaderPicker) refresh() {
 			}
 		}
 		p.summary.SetText(p.s.t("Advanced boot options changed: %s", list))
-		p.summary.Show()
+		// shown under the controls' own page; the options page shows the controls
+		if !p.inline {
+			p.summary.Show()
+		}
 	} else {
 		p.summary.SetText("")
 		p.summary.Hide()
@@ -402,6 +423,11 @@ func (s *screen) bootloaderSection() *fyne.Container {
 	p = s.newBootloaderPicker(s.bootloaderChoice, func() { s.bootloaderChoice = p.choice; s.ready() })
 	s.bootloaderOptions = p
 	p.setTarget(s.im != nil, s.drive != nil && s.drive.Fixed || s.card != nil && s.card.DataCard)
+	// the Options page's Advanced... is the only level: the rows show at once
+	p.inline = true
+	p.toggle.Hide()
+	p.rows.Show()
+	p.summary.Hide()
 	return p.box
 }
 func (s *screen) bootloaderSummary(record *firmware.BootloaderRecord) string {
@@ -509,7 +535,7 @@ func (s *screen) editBootloader(drive platform.Drive) {
 					}()
 				}, s.win)
 				d.SetFilter(storage.NewExtensionFileFilter([]string{".img", ".xz", ".gz", ".zip"}))
-				d.Show()
+				s.showFileDialog(d)
 			})
 			if drive.Fixed || info.Card.DataCard {
 				choose.Disable()

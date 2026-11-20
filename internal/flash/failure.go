@@ -142,6 +142,9 @@ var (
 var (
 	// StateIncomplete: an installation stopped after it had begun to write.
 	StateIncomplete = i18n.NewState("Writing stopped. The card is incomplete and has to be written again before you use it.")
+	// StateCardTest: a new installation stopped in the card tests (size and speed),
+	// before anything of the release went to the card; only their test blocks did.
+	StateCardTest = i18n.NewState("Nothing of andr36oid was written yet. Only the card test wrote a few small test blocks, so whatever was on the card before may be damaged in places.")
 	// StateUntouched: the write stopped before its first byte went to the card.
 	StateUntouched = i18n.NewState("Nothing was written to the card.")
 	// StateRestored: a failed update put the card back as it was.

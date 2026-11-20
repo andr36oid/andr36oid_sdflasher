@@ -28,6 +28,8 @@ import (
 const (
 	stageDownload = iota
 	stageCheck
+	// the card tests before the write: reading it, its size, its speed
+	stageCardTest
 	stageBackup
 	stageWrite
 	stageVerify
@@ -145,6 +147,8 @@ func (s *screen) stageText(stage int, guest string, done bool) string {
 			return s.t("Downloaded %s", guest)
 		case stageCheck:
 			return s.t("Checked the image")
+		case stageCardTest:
+			return s.t("Tested the card")
 		case stageBackup:
 			return s.t("Saved a backup")
 		case stageWrite:
@@ -158,6 +162,8 @@ func (s *screen) stageText(stage int, guest string, done bool) string {
 		return s.t("Downloading %s...", guest)
 	case stageCheck:
 		return s.t("Checking the image")
+	case stageCardTest:
+		return s.t("Testing the card")
 	case stageBackup:
 		return s.t("Saving a backup")
 	case stageWrite:
@@ -174,7 +180,7 @@ func (s *screen) newWork(guest string) *work {
 	if guest != "" {
 		w.stages = append(w.stages, stageDownload)
 	}
-	w.stages = append(w.stages, stageCheck)
+	w.stages = append(w.stages, stageCheck, stageCardTest)
 	if s.updating {
 		w.stages = append(w.stages, stageBackup)
 	}
@@ -227,11 +233,10 @@ func (s *screen) newWork(guest string) *work {
 	})
 	w.stop.Hide()
 	w.buttons = container.NewHBox(layout.NewSpacer(), w.stop)
-	cardSize := s.drive.Size
 	what := container.NewBorder(nil, nil, widget.NewLabelWithStyle(s.t("What is written"), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, w.hover)
 	// the blocks take the height that is left, so the legend below never needs scrolling
 	body := container.New(fillLast{}, row, w.result, w.phase, w.sub, w.bar, w.numbers, widget.NewSeparator(),
-		heading(s.t("The whole card (%s)", fmt.Sprintf("%.0f GB", float64(cardSize)/1e9))), w.strip,
+		heading(s.t("The whole card (%s)", cardSize(s.drive.Size))), w.strip,
 		what, w.blocks)
 	w.lead = wrapped(s.t("Do not take the card out.") + " " + s.driveTitle(*s.drive))
 	top := container.NewVBox(w.head, w.lead)
@@ -269,6 +274,22 @@ func (w *work) enter(stage int) {
 	}
 	w.phase.SetText(w.s.stageText(stage, w.guestName, false))
 	w.bar.Show()
+	w.bar.SetValue(0)
+	w.numbers.SetText("")
+}
+
+// unpacking: the game system is downloaded and now unpacked. The step and the
+// line above the bar say so, and speed and time left start again from here: they
+// are worked out from the unpacked bytes, not from the time spent downloading.
+func (w *work) unpacking() {
+	for i, st := range w.stages {
+		if st == stageDownload {
+			w.stageLabels[i].SetText(w.s.t("Unpacking %s...", w.guestName))
+		}
+	}
+	w.phase.SetText(w.s.t("Unpacking %s...", w.guestName))
+	w.sub.Hide()
+	w.stageAt, w.stageFrom = time.Now(), -1
 	w.bar.SetValue(0)
 	w.numbers.SetText("")
 }
@@ -334,7 +355,11 @@ func (w *work) progress(p flash.Progress) {
 		w.setPlan(p.Plan)
 	}
 	if p.Phase != w.lastPhase || p.Name != w.last {
-		s.logf("%s: %s", p.Phase, p.Name)
+		if p.Name == "" {
+			s.logf("%s", p.Phase)
+		} else {
+			s.logf("%s: %s", p.Phase, p.Name)
+		}
 	}
 	w.lastPhase, w.last = p.Phase, p.Name
 	where := func() string {
@@ -350,7 +375,15 @@ func (w *work) progress(p flash.Progress) {
 	sub := ""
 	switch p.Phase {
 	case "preflight":
-		w.enter(stageCheck)
+		// the image checks, then the card tests; an update tests the card's speed
+		// after its backup, and the strip does not go back for it
+		stage := stageCheck
+		if cardTest(p.Name) {
+			stage = stageCardTest
+		}
+		if stage >= w.stage {
+			w.enter(stage)
+		}
 		sub = s.t(p.Name)
 		w.count(p.Done, p.Total)
 	case "backup":
@@ -429,12 +462,11 @@ func (s *screen) runWrite(g *catalog.GuestRelease, boot *firmware.BootloaderChoi
 		if e == nil {
 			path, e = catalog.DownloadGuest(ctx, g, dir, func(phase string, done, total int64) {
 				fyne.Do(func() {
-					w.count(done, total)
-					if phase == "unpack" {
+					if phase == "unpack" && s.activity != actGuestUnpack {
 						s.activity = actGuestUnpack
-						w.sub.SetText(s.t("Unpacking"))
-						w.sub.Show()
+						w.unpacking()
 					}
+					w.count(done, total)
 				})
 			})
 		}
@@ -650,7 +682,19 @@ func (w *work) finished(next func()) {
 func (w *work) failed(e error, backup string, wrote bool) {
 	s := w.s
 	s.logf("write failed: %v", e)
+	// the step that failed, named first and marked in the strip
 	happened := ""
+	if step := w.failedStep(); step != "" {
+		happened = s.t("It stopped at this step: %s.", step) + " "
+	}
+	for i, st := range w.stages {
+		if st == w.stage {
+			w.stageIcons[i].SetResource(theme.ErrorIcon())
+		}
+	}
+	// the card tests come before anything of the release is written: a card that
+	// stops answering there is most often defective or counterfeit
+	cardTestFailed := w.lastPhase == "preflight" && cardTest(w.last) && flash.Classify(e) == flash.FailureDevice
 	if wrote && w.lastOff > 0 {
 		name := w.blocks.fail(w.lastOff - 1)
 		w.blocks.update(true)
@@ -659,7 +703,7 @@ func (w *work) failed(e error, backup string, wrote bool) {
 			verb = "It stopped while checking %s at %s."
 		}
 		if name != "" {
-			happened = s.t(verb, name, fmt.Sprintf("%.1f GB", float64(w.lastOff)/1e9)) + " "
+			happened = s.t(verb, name, cardSize(w.lastOff)) + " "
 		}
 	}
 	state := ""
@@ -670,13 +714,22 @@ func (w *work) failed(e error, backup string, wrote bool) {
 	} else {
 		state = s.t(flash.StateUntouched.Key())
 	}
-	if key, args, ok := i18n.Find(e); ok && key != stateKey(e) {
-		happened += s.t(key, args...)
-	} else {
-		happened += s.t("The card could not be written")
+	head := s.t("The card could not be written")
+	switch {
+	case cardTestFailed:
+		head = s.t("The card failed the card test")
+		happened += s.t("The card stopped answering during the card test, before anything of the system was written. This usually means the card is defective or counterfeit.")
+	default:
+		if key, args, ok := i18n.Find(e); ok && key != stateKey(e) {
+			happened += s.t(key, args...)
+		} else {
+			happened += s.t("The card could not be written")
+		}
 	}
 	todo := s.whatToDo(e)
 	switch {
+	case cardTestFailed:
+		todo = s.t("Try another card, best a known brand from a shop you trust. Tools such as H2testw or f3 can check a card. If other cards fail here too, try another card reader or USB port.")
 	case w.stage == stageDownload && s.errorIs(e, catalog.ErrDamagedDownload, flash.CauseGuestDamaged):
 		todo = s.t("The damaged download was deleted. Choose Try again to download it once more.")
 	case s.errorIs(e, platform.ErrCardChanged):
@@ -689,7 +742,37 @@ func (w *work) failed(e error, backup string, wrote bool) {
 	if backup != "" {
 		todo += "\n\n" + s.t("Recovery backups") + ": " + backup
 	}
-	w.failedText(s.t("The card could not be written"), happened, state, todo, e, nil)
+	w.failedText(head, happened, state, todo, e, nil)
+}
+
+// failedStep names the step a failed write was in, as the strip and the line
+// under it showed it: "Testing the card: Checking card speed".
+func (w *work) failedStep() string {
+	s := w.s
+	if w.lastPhase == "preflight" && cardTest(w.last) {
+		return s.stageText(stageCardTest, w.guestName, false) + ": " + s.t(w.last)
+	}
+	if w.lastPhase == "preflight" && w.last == flash.OpenCheck {
+		// between the image checks, before the card tests
+		return s.t(w.last)
+	}
+	name := ""
+	for i, st := range w.stages {
+		if st == w.stage {
+			name = w.stageLabels[i].Text
+		}
+	}
+	name = strings.TrimSuffix(name, "...")
+	if name == "" {
+		return ""
+	}
+	switch w.lastPhase {
+	case "preflight", "backup", "writing", "verifying", "restoring":
+		if w.last != "" {
+			name += ": " + s.t(w.last)
+		}
+	}
+	return name
 }
 
 // errorIs: e is a message of one of fs, or the message Find reads from it is.
@@ -885,7 +968,7 @@ func (s *screen) showDone(p *flash.Plan, result jobs.Result, speed *flash.CardSp
 				fyne.Do(func() {
 					if e != nil {
 						eject.Enable()
-						s.info(s.t("Eject card"), s.t("The card could not be ejected. Eject it with your computer’s own eject, then insert it into the console’s system card slot.")+"\n\n"+s.t("Technical details")+": "+e.Error(), s.win)
+						s.info(s.t("Eject card"), s.t("The card is written and checked. Only ejecting it did not work.")+" "+s.t("The card could not be ejected. Eject it with your computer’s own eject, then insert it into the console’s system card slot.")+"\n\n"+s.t("Technical details")+": "+e.Error(), s.win)
 						return
 					}
 					eject.Hide()
@@ -929,4 +1012,11 @@ func (s *screen) showDone(p *flash.Plan, result jobs.Result, speed *flash.CardSp
 		return
 	}
 	fixes(drive)
+}
+
+// cardTest: a check of the write that tests the card itself, before anything of
+// the release is written (it reads the card, and the size and speed checks write
+// test blocks).
+func cardTest(name string) bool {
+	return name == flash.ReadCheck || name == flash.SizeCheck || name == flash.SpeedCheck
 }

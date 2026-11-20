@@ -32,9 +32,12 @@ type Profile struct {
 	// Other consoles whose list shows it too, e.g. a V12 wired like the G80
 	AlsoFor      []string `json:"also_for,omitempty"`
 	Experimental bool     `json:"experimental"`
-	Kernel       string   `json:"kernel"`
-	BootFiles    []string `json:"boot_files"`
-	Hash         string   `json:"hash"`
+	// Hidden: a copy at a board's old folder, kept for older flashers and for
+	// cards set up before the move; never offered in a list
+	Hidden    bool     `json:"hidden,omitempty"`
+	Kernel    string   `json:"kernel"`
+	BootFiles []string `json:"boot_files"`
+	Hash      string   `json:"hash"`
 }
 type Image struct {
 	DTBVersion    string       `json:"dtb_version,omitempty"`
@@ -397,7 +400,7 @@ func Profiles(fs filesystem.FileSystem) ([]Profile, error) {
 			if info.Console == "" {
 				info.Console = info.Name
 			}
-			result = append(result, Profile{ID: id, Name: info.Name, Console: info.Console, AlsoFor: info.AlsoFor, Experimental: info.Experimental, Kernel: kernel, BootFiles: files, Hash: hex.EncodeToString(sum[:])})
+			result = append(result, Profile{ID: id, Name: info.Name, Console: info.Console, AlsoFor: info.AlsoFor, Experimental: info.Experimental, Hidden: info.Hidden, Kernel: kernel, BootFiles: files, Hash: hex.EncodeToString(sum[:])})
 		}
 		return nil
 	}
@@ -410,6 +413,38 @@ func Profiles(fs filesystem.FileSystem) ([]Profile, error) {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result, nil
+}
+
+// Offered are the profiles a list shows: all but the hidden ones.
+func Offered(profiles []Profile) []Profile {
+	var out []Profile
+	for _, p := range profiles {
+		if !p.Hidden {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ListedAs is the profile a list shows for id: id itself, or for a hidden copy at
+// a board's old folder the offered profile with the same Android device tree. ""
+// when the image has no such profile.
+func ListedAs(profiles []Profile, id string) string {
+	for _, p := range profiles {
+		if p.ID != id {
+			continue
+		}
+		if !p.Hidden {
+			return id
+		}
+		for _, q := range profiles {
+			if !q.Hidden && q.Hash == p.Hash && q.Hash != "" {
+				return q.ID
+			}
+		}
+		return id
+	}
+	return ""
 }
 
 // For reports whether the profile is listed under console.
@@ -430,8 +465,9 @@ func (p Profile) For(console string) bool {
 //
 //	folder|console|name|flags
 //
-// flags, comma separated: "experimental" (asked about before use) and
-// "also=<console>;<console>" (listed under those consoles too).
+// flags, comma separated: "experimental" (asked about before use),
+// "also=<console>;<console>" (listed under those consoles too) and "hidden" (a copy
+// at a board's old folder, kept for older flashers and old cards, never offered).
 const ProfileList = "andr36oid-profiles.txt"
 
 // ErrNoProfileList is an image from before 2026-10-22, which names its profiles nowhere.
@@ -441,20 +477,48 @@ type profileInfo struct {
 	Name, Console string
 	AlsoFor       []string
 	Experimental  bool
+	Hidden        bool
+}
+
+// ProfileListEntries are the profiles a ProfileList names, in its order, with its
+// names and flags (the files come from the image).
+func ProfileListEntries(b []byte) []Profile {
+	var out []Profile
+	m := parseProfileList(b)
+	for _, line := range strings.Split(string(b), "\n") {
+		if id, ok := profileLineID(line); ok {
+			if info, ok := m[id]; ok {
+				out = append(out, Profile{ID: id, Name: info.Name, Console: info.Console, AlsoFor: info.AlsoFor, Experimental: info.Experimental, Hidden: info.Hidden})
+				delete(m, id)
+			}
+		}
+	}
+	return out
+}
+
+// profileLineID is the folder a ProfileList line names; ok false for comments,
+// empty lines and lines without a folder.
+func profileLineID(line string) (string, bool) {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return "", false
+	}
+	f := strings.Split(line, "|")
+	// a line without a folder ("/|...", "|...") names no profile
+	if len(f) < 3 || strings.Trim(strings.TrimSpace(f[0]), "/") == "" {
+		return "", false
+	}
+	return strings.Trim(strings.TrimSpace(f[0]), "/"), true
 }
 
 func parseProfileList(b []byte) map[string]profileInfo {
 	m := map[string]profileInfo{}
 	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
+		if _, ok := profileLineID(line); !ok {
 			continue
 		}
 		f := strings.Split(line, "|")
-		// a line without a folder ("/|...", "|...") names no profile
-		if len(f) < 3 || strings.Trim(strings.TrimSpace(f[0]), "/") == "" {
-			continue
-		}
 		info := profileInfo{Console: strings.TrimSpace(f[1]), Name: strings.TrimSpace(f[2])}
 		if len(f) > 3 {
 			for _, flag := range strings.Split(f[3], ",") {
@@ -462,6 +526,8 @@ func parseProfileList(b []byte) map[string]profileInfo {
 				switch {
 				case flag == "experimental":
 					info.Experimental = true
+				case flag == "hidden":
+					info.Hidden = true
 				case strings.HasPrefix(flag, "also="):
 					for _, c := range strings.Split(strings.TrimPrefix(flag, "also="), ";") {
 						if c = strings.TrimSpace(c); c != "" {

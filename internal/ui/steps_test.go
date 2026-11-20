@@ -123,6 +123,11 @@ func TestStepsNeedWhatComesBefore(t *testing.T) {
 	// (none here): the card is chosen anew
 	s.drive, s.card = &platform.Drive{Path: "x", Size: 16e9}, &flash.Card{Installed: false}
 	s.ready()
+	// no console is chosen for the user: Next waits for a pick
+	if s.profile != "" || s.reachable(stepOptions) || !s.nexts[stepConsole].Disabled() {
+		t.Fatal("a console was chosen for the user", s.profile)
+	}
+	s.chooseProfile("Panels/Panel4")
 	if !s.reachable(stepWrite) || s.sideSteps[stepWrite].Disabled() {
 		t.Fatal("new install with everything chosen must reach the write page")
 	}
@@ -248,6 +253,7 @@ func TestExperimentalNeedsAgreement(t *testing.T) {
 func TestCardWithExperimentalProfileAsksNothing(t *testing.T) {
 	s := testScreen(t, fyne.NewSize(980, 680))
 	s.card = &flash.Card{Installed: true, Treble: true, Profile: "Experimental/EE-G80-Panel8"}
+	s.setTask(taskUpdate)
 	s.autoProfile()
 	if s.profile != "Experimental/EE-G80-Panel8" || s.win.Canvas().Overlays().Top() != nil || s.profileOK() {
 		t.Fatal("experimental profile of the card")
@@ -408,6 +414,12 @@ func TestEveryPageRenders(t *testing.T) {
 			s.build()
 			s.autoProfile()
 			name := func(page string) string { return fmt.Sprintf("%s-%s-%s", sizeName, l.Code, page) }
+			if full {
+				// nothing chosen yet: the card's last profile is marked, Next is off
+				s.showStep(stepConsole)
+				capture(t, s, dir, name("3-console-unchosen"))
+			}
+			s.chooseProfile("Experimental/EE-G80-Panel8")
 			for step := 0; step < stepCount; step++ {
 				s.showStep(step)
 				if s.step != step {

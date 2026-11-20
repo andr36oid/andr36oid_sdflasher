@@ -145,7 +145,7 @@ func planDTBs(stage *setupStage, p *DTBPack, opts DTBOptions) (*DTBPlan, error) 
 	sort.Strings(ids)
 	for _, id := range ids {
 		info := profiles[id]
-		plan.Profiles = append(plan.Profiles, Profile{ID: id, Name: info.Name, Console: info.Console, Experimental: info.Experimental, AlsoFor: info.AlsoFor})
+		plan.Profiles = append(plan.Profiles, Profile{ID: id, Name: info.Name, Console: info.Console, Experimental: info.Experimental, Hidden: info.Hidden, AlsoFor: info.AlsoFor})
 		changed := false
 		added := false
 		if _, e := stage.boot.ReadDir(id); e != nil {

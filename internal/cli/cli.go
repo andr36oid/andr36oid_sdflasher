@@ -905,6 +905,11 @@ func chooseProfile(in *bufio.Reader, profiles []firmware.Profile, want string) (
 		}
 		return "", fmt.Errorf("no profile in this image matches %q; omit -profile to choose from the list", want)
 	}
+	// a hidden profile (a copy at a board's old folder) is only taken by name
+	profiles = firmware.Offered(profiles)
+	if len(profiles) == 0 {
+		return "", errors.New("the image has no device profiles")
+	}
 	if len(profiles) == 1 {
 		fmt.Printf("Device profile: %s\n", profiles[0].Name)
 		return profiles[0].ID, nil

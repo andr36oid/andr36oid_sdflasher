@@ -18,7 +18,8 @@ const (
 	actUnpackImage   // a packed release image is unpacked and checked
 	actGuestDownload // the game system is downloaded
 	actGuestUnpack   // the game system is unpacked and checked
-	actWriteCheck    // the write checks the image and the card first
+	actWriteCheck    // the write checks the image first
+	actCardTest      // the write tests the card (reading, size, speed) first
 	actBackup        // an update saves its recovery backup
 	actWrite         // the card is written
 	actGuestInstall  // the game system's partition is written
@@ -31,6 +32,7 @@ const (
 var stageActivity = map[int]int{
 	stageDownload: actGuestDownload,
 	stageCheck:    actWriteCheck,
+	stageCardTest: actCardTest,
 	stageBackup:   actBackup,
 	stageWrite:    actWrite,
 	stageVerify:   actVerify,
@@ -63,6 +65,8 @@ func (s *screen) closePrompt() (title, body string, stoppable bool) {
 		return s.t("Stop unpacking the game system?"), s.t("Unpacking stops and the window closes. Nothing was written to the card."), stoppable
 	case actWriteCheck:
 		return s.t("The image is being checked"), s.t("The flasher is checking the image and the card before it writes. Nothing was written to the card yet. Wait until it is finished, or choose Stop first, then close the window."), false
+	case actCardTest:
+		return s.t("The card is being tested"), s.t("The flasher is testing the card before it writes andr36oid: it reads it and writes a few small test blocks. Wait until it is finished, or choose Stop first, then close the window."), false
 	case actBackup:
 		return s.t("A backup is being saved"), s.t("The flasher is saving a backup of the card before it updates it. Nothing on the card was changed yet. Wait until it is finished, or choose Stop first, then close the window."), false
 	case actWrite:

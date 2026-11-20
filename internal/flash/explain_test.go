@@ -19,8 +19,9 @@ func TestHarnessFailuresAreExplained(t *testing.T) {
 		state *i18n.Format
 	}{
 		{"io error mid image", func(c *fakeCard, p *Plan) { c.failAt = p.Writes[0].Offset + 1<<20 }, i18n.CauseDeviceGone, StateIncomplete},
-		{"short writes", func(c *fakeCard, p *Plan) { c.short = true }, i18n.CauseDeviceGone, StateIncomplete},
-		{"reader vanishes", func(c *fakeCard, p *Plan) { c.vanishAfter = 6 }, i18n.CauseDeviceGone, StateIncomplete},
+		// these fail in the card test, before anything of the release is written
+		{"short writes", func(c *fakeCard, p *Plan) { c.short = true }, i18n.CauseDeviceGone, StateCardTest},
+		{"reader vanishes", func(c *fakeCard, p *Plan) { c.vanishAfter = 6 }, i18n.CauseDeviceGone, StateCardTest},
 		{"write-protected", func(c *fakeCard, p *Plan) { c.readOnly = true }, ErrWriteProtected, nil},
 		{"unreadable before writing", func(c *fakeCard, p *Plan) { c.failReadAt = p.Writes[len(p.Writes)-3].Offset }, i18n.CauseDeviceGone, StateUntouched},
 		{"fake card that drops writes", func(c *fakeCard, p *Plan) { c.drop = 8 << 30 }, ErrFakeCapacity, nil},

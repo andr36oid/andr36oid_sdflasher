@@ -1,9 +1,13 @@
 package ui
 
 import (
-	"fyne.io/fyne/v2/test"
-	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
+	"strings"
 	"testing"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/widget"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 )
 
 func TestBootloaderRows(t *testing.T) {
@@ -46,7 +50,14 @@ func TestBootloaderRows(t *testing.T) {
 	if p.controls[0].options[2].reason == "" || p.selection() == nil {
 		t.Fatal("offline fallback")
 	}
-	if p.rows.Visible() || p.warning.Text != loaderTestWarning {
+	// the test-build warning is the boot chain's help, under its control
+	found := false
+	dtbWidgets(p.rows, func(o fyne.CanvasObject) {
+		if l, ok := o.(*widget.Label); ok && strings.Contains(l.Text, loaderTestWarning) {
+			found = true
+		}
+	})
+	if p.rows.Visible() || !found {
 		t.Fatal("warning wording")
 	}
 }

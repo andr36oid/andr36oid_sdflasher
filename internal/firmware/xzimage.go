@@ -423,3 +423,36 @@ func reportProgress(done *atomic.Int64, total int64, progress func(int64, int64)
 		<-exited
 	}
 }
+
+// UnpackXZ unpacks the .xz archive in (size bytes long) into dst the way a release
+// image is unpacked: its blocks in parallel when it is one plain stream with an
+// index (xz -T0), in order otherwise. want is the size the unpacked file must have:
+// an archive whose index says otherwise is refused before anything is unpacked, and
+// the in-order way stops past it. progress counts the unpacked bytes against want,
+// so a time left can be worked out from it; digest, if given, gets the bytes in
+// order. A damaged archive gives an error starting "damaged archive".
+func UnpackXZ(ctx context.Context, in io.ReaderAt, size int64, dst *os.File, want int64, progress func(int64, int64), digest hash.Hash) error {
+	layout, e := xzLayoutOf(in, size)
+	if e != nil && !errors.Is(e, errNotSingleStream) {
+		return fmt.Errorf("damaged archive: %w", e)
+	}
+	if layout != nil {
+		if layout.size != want {
+			return fmt.Errorf("damaged archive: it unpacks to %d bytes, not %d", layout.size, want)
+		}
+		return unpackXZBlocks(ctx, in, dst, layout, progress, digest)
+	}
+	r, e := xz.NewReader(io.NewSectionReader(in, 0, size), 0)
+	if e != nil {
+		return fmt.Errorf("damaged archive: %w", e)
+	}
+	var out io.Writer = dst
+	if digest != nil {
+		out = io.MultiWriter(dst, digest)
+	}
+	var done atomic.Int64
+	stop := reportProgress(&done, want, progress)
+	_, e = copyCtx(ctx, out, r, want, &done)
+	stop()
+	return e
+}

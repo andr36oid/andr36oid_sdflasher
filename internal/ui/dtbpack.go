@@ -71,7 +71,7 @@ func (s *screen) dtbPackPage(drive platform.Drive) {
 			ready()
 		}, s.win)
 		d.SetFilter(storage.NewExtensionFileFilter([]string{".zip"}))
-		d.Show()
+		s.showFileDialog(d)
 	})
 	source.OnChanged = func(string) { ready() }
 	back := widget.NewButton(s.t("Back"), func() {
@@ -231,30 +231,35 @@ func (s *screen) writeDTBRequest(req jobs.Request, restore bool, plan *firmware.
 	}()
 }
 func (s *screen) imageDTBSection() *fyne.Container {
-	s.dtbLabel = wrapped(s.t("Device trees as in the release"))
-	if s.im != nil && s.im.DTBVersion != "" {
-		s.dtbLabel.SetText(s.t("Using device trees from %s", s.im.DTBVersion))
+	s.dtbLabel = wrapped("")
+	s.dtbReset = widget.NewButton(s.t("Use shipped DTB"), s.clearCustom)
+	change := widget.NewButton(s.t("Change..."), s.changeDTB)
+	s.refreshDTBLabel()
+	return optionRow(s.dtbLabel, container.NewHBox(s.dtbReset, change),
+		s.t("A device tree pack (.zip) replaces the release's device trees. One .dtb file replaces only the Android DTB of the chosen console.")+" "+s.t(firmware.CustomWarning))
+}
+
+// refreshDTBLabel says which device trees are written: a custom DTB, a newer
+// device tree pack, or the release's own.
+func (s *screen) refreshDTBLabel() {
+	if s.dtbLabel == nil {
+		return
 	}
-	change := widget.NewButton(s.t("Change..."), func() {
-		if s.busy || s.im == nil {
-			return
+	switch {
+	case s.custom != "":
+		s.dtbLabel.SetText(s.dtbText())
+	case s.im != nil && s.im.DTBVersion != "":
+		s.dtbLabel.SetText(s.t("Using device trees from %s", s.im.DTBVersion))
+	default:
+		s.dtbLabel.SetText(s.t("Device trees as in the release"))
+	}
+	if s.dtbReset != nil {
+		if s.custom == "" {
+			s.dtbReset.Hide()
+		} else {
+			s.dtbReset.Show()
 		}
-		d := dialog.NewFileOpen(func(r fyne.URIReadCloser, e error) {
-			if e != nil {
-				s.dtbInfo(s.t("Update device trees"), s.t(e.Error()), s.win)
-				return
-			}
-			if r == nil {
-				return
-			}
-			file := r.URI().Path()
-			r.Close()
-			s.loadImageDTBs(file, false)
-		}, s.win)
-		d.SetFilter(storage.NewExtensionFileFilter([]string{".zip"}))
-		d.Show()
-	})
-	return container.NewBorder(nil, nil, nil, change, s.dtbLabel)
+	}
 }
 func (s *screen) lookupImageDTBs() {
 	if !s.started || s.im == nil {
@@ -306,9 +311,7 @@ func (s *screen) loadImageDTBs(file string, optional bool) {
 			s.im = updated
 			s.dtbFile = p.Path
 			s.dtbManifest = p.ManifestPath
-			if s.dtbLabel != nil {
-				s.dtbLabel.SetText(s.t("Using device trees from %s", updated.DTBVersion))
-			}
+			s.refreshDTBLabel()
 			s.populateImage()
 			s.autoProfile()
 			s.ready()

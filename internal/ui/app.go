@@ -64,16 +64,21 @@ type screen struct {
 	startCards [3]*choiceCard
 
 	// release
-	im                              *firmware.Image
-	assets, otherAssets             []catalog.Asset
-	asset                           *catalog.Asset // chosen for download, nil for a file from disk
-	assetsLooking, assetsDone       bool
-	assetsErr                       error
-	releaseCard                     *choiceCard
+	im                        *firmware.Image
+	assets, otherAssets       []catalog.Asset
+	asset                     *catalog.Asset // chosen for download, nil for a file from disk
+	assetsLooking, assetsDone bool
+	assetsErr                 error
+	releaseCard               *choiceCard
+	releaseLead               *widget.Label
+	// localFile: the release file chosen from this computer, with its size
+	localFile                       string
+	localSize                       int64
 	releaseLabel                    *widget.Label
 	progress                        *widget.ProgressBar
 	stopLoad                        *widget.Button
 	dtbLabel                        *widget.Label
+	dtbReset                        *widget.Button // under Advanced, back from a custom DTB
 	dtbFile, dtbManifest, dtbLookup string
 	// an update: the kind (kindKey) the user chose on purpose, for the card with
 	// the fingerprint kindFor; variantBox says what the card runs (variant.go)
@@ -97,6 +102,7 @@ type screen struct {
 
 	// console
 	profile        string
+	profilePicked  bool            // the user chose profile on the console page
 	experimentalOK map[string]bool // experimental profiles whose warning was agreed to
 	search         *widget.Entry
 	consoleLead    *widget.Label
@@ -145,6 +151,7 @@ type screen struct {
 	system            string // a different system image (GSI), "" for andr36oid's
 	systemAccepted    bool
 	systemLabel       *widget.Label
+	systemClear       *widget.Button
 	bootloaderOptions *bootloaderPicker
 	bootloaderChoice  firmware.BootloaderChoice
 
@@ -309,6 +316,7 @@ func (s *screen) ready() {
 	s.refreshFixes()
 	s.refreshRelease()
 	s.refreshCardNote()
+	s.refreshDTBLabel()
 	if s.customClear != nil {
 		if s.custom == "" {
 			s.customClear.Hide()
@@ -425,6 +433,10 @@ func (s *screen) chooseImage() {
 		p := r.URI().Path()
 		r.Close()
 		s.asset = nil
+		s.localFile, s.localSize = p, 0
+		if st, e := os.Stat(p); e == nil {
+			s.localSize = st.Size()
+		}
 		s.loadImage(p)
 	}, s.win)
 	// release images come packed: only .img.xz, .img.gz and .img.zip are listed
@@ -436,7 +448,7 @@ func (s *screen) chooseImage() {
 	if location, err := storage.ListerForURI(storage.NewFileURI(directory)); err == nil {
 		d.SetLocation(location)
 	}
-	d.Show()
+	s.showFileDialog(d)
 }
 
 func (s *screen) loadImage(p string, origin ...string) {
@@ -457,7 +469,7 @@ func (s *screen) loadImage(p string, origin ...string) {
 		}
 	}
 	s.im = nil
-	s.profile = ""
+	s.profile, s.profilePicked = "", false
 	s.custom = ""
 	s.customAccepted = false
 	s.convert = false
@@ -523,19 +535,31 @@ func (s *screen) progressFn() func(int64, int64) {
 	}
 }
 
-// autoProfile chooses the profile the card was set up with, or Panel 4 for a new
-// card. An experimental one is only chosen here: its warning waits on the console page.
+// autoProfile chooses the profile of an update: the one the card was set up with
+// (for a hidden copy at a board's old folder, the listed profile with the same
+// device tree). A new card gets no profile until the user picks one: Next stays
+// off, so nobody writes a profile they never looked at. An experimental one is only
+// chosen here: its warning waits on the console page.
 func (s *screen) autoProfile() {
-	if s.card != nil && s.card.Profile != "" {
-		if !s.selectProfile(s.card.Profile) {
-			s.profile = ""
-			s.refreshConsoles()
-		}
+	if s.profilePicked {
 		return
 	}
-	if s.profile == "" {
-		s.selectProfile("Panels/Panel4")
+	if s.updating && s.card != nil && s.card.Profile != "" && s.im != nil {
+		if id := firmware.ListedAs(s.im.Profiles, s.card.Profile); id != "" && s.selectProfile(id) {
+			return
+		}
 	}
+	s.profile = ""
+	s.refreshConsoles()
+}
+
+// lastProfile is the listed profile the chosen card was set up with last time, ""
+// if none.
+func (s *screen) lastProfile() string {
+	if s.card == nil || s.card.Profile == "" || s.im == nil {
+		return ""
+	}
+	return firmware.ListedAs(s.im.Profiles, s.card.Profile)
 }
 
 func (s *screen) selectProfile(id string) bool {
@@ -560,9 +584,7 @@ func (s *screen) populateImage() {
 	s.lookupGuest()
 	s.lookupImageDTBs()
 	s.lookupFixes()
-	if s.dtbLabel != nil && s.im.DTBVersion != "" {
-		s.dtbLabel.SetText(s.t("Using device trees from %s", s.im.DTBVersion))
-	}
+	s.refreshDTBLabel()
 }
 
 // tooSmall: a new installation on a card under flash.MinCardBytes
@@ -574,32 +596,54 @@ func (s *screen) tooSmallText() string {
 	return s.t("This card is too small. andr36oid needs a card of at least 16 GB; this one has %.1f GB.", float64(s.drive.Size)/1e9)
 }
 
-func (s *screen) chooseCustom() {
-	if s.busy {
+// changeDTB is the one control of the device trees under Advanced: a device tree
+// pack (.zip) replaces the release's device trees, one .dtb replaces the Android
+// DTB of the chosen profile (after its warning).
+func (s *screen) changeDTB() {
+	if s.busy || s.im == nil {
 		return
 	}
+	d := dialog.NewFileOpen(func(r fyne.URIReadCloser, e error) {
+		if e != nil {
+			s.showError(e)
+			return
+		}
+		if r == nil {
+			return
+		}
+		file := r.URI().Path()
+		r.Close()
+		if strings.EqualFold(filepath.Ext(file), ".zip") {
+			s.loadImageDTBs(file, false)
+			return
+		}
+		s.useCustomDTB(file)
+	}, s.win)
+	d.SetFilter(storage.NewExtensionFileFilter([]string{".zip", ".dtb"}))
+	s.showFileDialog(d)
+}
+
+// useCustomDTB takes file as the Android DTB once its warning is agreed to.
+func (s *screen) useCustomDTB(file string) {
 	s.confirmDialog(s.t("Custom Android DTB"), s.t(firmware.CustomWarning)+"\n\n"+s.t("Only the Android DTB is replaced. The selected shipped profile still supplies the bootloader display files. Continue only if this DTB was made for your console and this release."), func(ok bool) {
 		if !ok {
 			return
 		}
-		d := dialog.NewFileOpen(func(r fyne.URIReadCloser, e error) {
-			if e != nil {
-				s.showError(e)
-				return
-			}
-			if r == nil {
-				return
-			}
-			s.custom = r.URI().Path()
-			r.Close()
-			s.customAccepted = true
-			s.convert = false
-			s.customLabel.SetText(s.dtbText())
-			s.ready()
-		}, s.win)
-		d.SetFilter(storage.NewExtensionFileFilter([]string{".dtb"}))
-		d.Show()
+		s.custom = file
+		s.customAccepted = true
+		s.convert = false
+		s.customLabel.SetText(s.dtbText())
+		s.ready()
 	}, s.win)
+}
+
+// showFileDialog shows a file dialog as large as the window allows, in the list
+// view unless the user chose the grid before: long release names are not cut.
+func (s *screen) showFileDialog(d *dialog.FileDialog) {
+	d.SetView(dialog.ListView)
+	size := s.win.Canvas().Size()
+	d.Resize(fyne.NewSize(max(size.Width-80, 600), max(size.Height-80, 420)))
+	d.Show()
 }
 
 func (s *screen) clearCustom() {
@@ -624,7 +668,8 @@ func (s *screen) lookupReleases() {
 			if e == nil {
 				s.assets, s.otherAssets = catalog.Split(assets)
 				s.logf("%d release images found", len(assets))
-				if s.asset == nil && s.im == nil && len(s.assets) > 0 {
+				// not while a file from this computer is being checked
+				if s.asset == nil && s.im == nil && s.localFile == "" && len(s.assets) > 0 {
 					s.asset = &s.assets[0]
 				}
 			} else {
@@ -741,6 +786,7 @@ func (s *screen) download(a catalog.Asset) {
 		return
 	}
 	s.logf("downloading %s", a.URL)
+	s.localFile = ""
 	s.setBusy(true)
 	s.activity = actDownload
 	s.progress.Show()
@@ -861,5 +907,5 @@ func (s *screen) restoreBackup(drive platform.Drive) {
 		}, s.win)
 	}, s.win)
 	d.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
-	d.Show()
+	s.showFileDialog(d)
 }

@@ -17,7 +17,6 @@ import (
 
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
-	"github.com/xi2/xz"
 )
 
 // A game system ("guest") is a Linux distribution the console runs from its own
@@ -352,7 +351,8 @@ func fetchSmall(ctx context.Context, a Asset) ([]byte, error) {
 
 // DownloadGuest fetches the release into dir and returns the unpacked image, checked
 // against the manifest. An image already there from an earlier run is used again.
-// progress counts the packed bytes, first downloading, then unpacking.
+// progress counts first the downloaded bytes ("download", of the download's size),
+// then the unpacked ones ("unpack", of the image's size).
 func DownloadGuest(ctx context.Context, g *GuestRelease, dir string, progress func(phase string, done, total int64)) (string, error) {
 	final := filepath.Join(dir, g.Image.SHA256+"-"+g.Image.Name)
 	if st, e := os.Stat(final); e == nil && st.Size() == g.Image.Size {
@@ -387,37 +387,54 @@ func DownloadGuest(ctx context.Context, g *GuestRelease, dir string, progress fu
 	return unpackGuest(ctx, g, parts, dir, progress)
 }
 
-type ctxReader struct {
-	ctx context.Context
-	r   io.Reader
-	n   *int64
+// parts is the downloaded parts read as the one file they were split from.
+type parts struct {
+	files []*os.File
+	sizes []int64
 }
 
-func (c ctxReader) Read(b []byte) (int, error) {
-	if e := c.ctx.Err(); e != nil {
-		return 0, e
+func (p parts) ReadAt(b []byte, off int64) (int, error) {
+	n := 0
+	for i, f := range p.files {
+		if off >= p.sizes[i] {
+			off -= p.sizes[i]
+			continue
+		}
+		for n < len(b) && off < p.sizes[i] {
+			m, e := f.ReadAt(b[n:min(len(b), n+int(p.sizes[i]-off))], off)
+			n += m
+			off += int64(m)
+			if e != nil && !(e == io.EOF && off == p.sizes[i]) {
+				return n, e
+			}
+		}
+		if n == len(b) {
+			return n, nil
+		}
+		off = 0
 	}
-	n, e := c.r.Read(b)
-	*c.n += int64(n)
-	return n, e
+	return n, io.EOF
 }
 
 // unpackGuest joins the parts, unpacks them and keeps the image only if its size and
-// checksum are the manifest's.
-func unpackGuest(ctx context.Context, g *GuestRelease, parts []string, dir string, progress func(string, int64, int64)) (string, error) {
-	var readers []io.Reader
-	for _, p := range parts {
+// checksum are the manifest's. It unpacks the way the release image is unpacked
+// (firmware.UnpackXZ): the blocks of an xz -T0 archive on several cores, others in
+// order. progress counts the unpacked bytes of the image.
+func unpackGuest(ctx context.Context, g *GuestRelease, paths []string, dir string, progress func(string, int64, int64)) (string, error) {
+	var in parts
+	var packed int64
+	for _, p := range paths {
 		f, e := os.Open(p)
 		if e != nil {
 			return "", e
 		}
 		defer f.Close()
-		readers = append(readers, f)
-	}
-	var packed int64
-	z, e := xz.NewReader(ctxReader{ctx, io.MultiReader(readers...), &packed}, 0)
-	if e != nil {
-		return "", e
+		st, e := f.Stat()
+		if e != nil {
+			return "", e
+		}
+		in.files, in.sizes = append(in.files, f), append(in.sizes, st.Size())
+		packed += st.Size()
 	}
 	out, e := os.CreateTemp(dir, "darkosen-*.part")
 	if e != nil {
@@ -427,34 +444,28 @@ func unpackGuest(ctx context.Context, g *GuestRelease, parts []string, dir strin
 	defer os.Remove(tmp)
 	defer out.Close()
 	h := sha256.New()
-	buf := make([]byte, 4<<20)
-	var n int64
-	for {
-		read, re := z.Read(buf)
-		if read > 0 {
-			if n += int64(read); n > g.Image.Size {
-				return "", i18n.Detailed(ErrDamagedDownload.New(), fmt.Errorf("the %s download is damaged", g.name()))
-			}
-			h.Write(buf[:read])
-			if _, e = out.Write(buf[:read]); e != nil {
-				return "", firmware.SpaceError(dir, g.Image.Size-n+int64(read), e)
-			}
-			if progress != nil {
-				progress("unpack", min(packed, g.Download.Size), g.Download.Size)
-			}
+	damaged := i18n.Detailed(ErrDamagedDownload.New(), fmt.Errorf("the %s download is damaged", g.name()))
+	e = firmware.UnpackXZ(ctx, in, packed, out, g.Image.Size, func(done, total int64) {
+		if progress != nil {
+			progress("unpack", done, total)
 		}
-		if re == io.EOF {
-			break
+	}, h)
+	if e != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
 		}
-		if re != nil {
-			if ctx.Err() != nil {
-				return "", ctx.Err()
-			}
-			return "", i18n.Detailed(ErrDamagedDownload.New(), fmt.Errorf("the %s download is damaged", g.name()))
+		if s := firmware.SpaceError(dir, g.Image.Size, e); s != e {
+			return "", s
 		}
+		return "", damaged
 	}
+	st, e := out.Stat()
+	if e != nil {
+		return "", e
+	}
+	n := st.Size()
 	if n != g.Image.Size || hex.EncodeToString(h.Sum(nil)) != g.Image.SHA256 {
-		return "", i18n.Detailed(ErrDamagedDownload.New(), fmt.Errorf("the %s download is damaged", g.name()))
+		return "", damaged
 	}
 	if e = out.Sync(); e != nil {
 		return "", e

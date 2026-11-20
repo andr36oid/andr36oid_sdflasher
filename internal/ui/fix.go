@@ -214,7 +214,7 @@ func (s *screen) saveLog() {
 			d.SetLocation(l)
 		}
 	}
-	d.Show()
+	s.showFileDialog(d)
 }
 
 // slotPicture shows what to do with the card: into the console's first slot.

@@ -54,7 +54,7 @@ func (s *screen) chooseOwnDTB() {
 			s.previewConversion(p)
 		}, s.win)
 		d.SetFilter(storage.NewExtensionFileFilter([]string{".dtb"}))
-		d.Show()
+		s.showFileDialog(d)
 	}, s.win)
 }
 

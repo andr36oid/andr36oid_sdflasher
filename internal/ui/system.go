@@ -15,14 +15,19 @@ import (
 func (s *screen) systemSection() fyne.CanvasObject {
 	s.systemLabel = wrapped(s.systemText())
 	choose := widget.NewButton(s.t("Choose system image..."), s.chooseSystem)
-	clear := widget.NewButton(s.t("Use the andr36oid system"), func() {
+	var clear *widget.Button
+	clear = widget.NewButton(s.t("Use the andr36oid system"), func() {
 		s.system = ""
 		s.systemAccepted = false
 		s.systemLabel.SetText(s.systemText())
+		clear.Hide()
 		s.ready()
 	})
-	return widget.NewAccordion(widget.NewAccordionItem(s.t("Advanced: different system image (GSI)"),
-		container.NewVBox(wrapped(s.t(firmware.GSIWarning)), s.systemLabel, container.NewHBox(choose, clear))))
+	if s.system == "" {
+		clear.Hide()
+	}
+	s.systemClear = clear
+	return optionRow(s.systemLabel, container.NewHBox(clear, choose), s.t(firmware.GSIWarning))
 }
 
 func (s *screen) systemText() string {
@@ -52,9 +57,10 @@ func (s *screen) chooseSystem() {
 			r.Close()
 			s.systemAccepted = true
 			s.systemLabel.SetText(s.systemText())
+			s.systemClear.Show()
 			s.ready()
 		}, s.win)
 		d.SetFilter(storage.NewExtensionFileFilter([]string{".img"}))
-		d.Show()
+		s.showFileDialog(d)
 	}, s.win)
 }

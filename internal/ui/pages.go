@@ -67,6 +67,10 @@ func (s *screen) setTask(task int) {
 		s.eraseOK = false
 	}
 	s.updating = updating
+	if s.im != nil && s.consoleList != nil {
+		// an update takes the card's own profile; a new card waits for a pick
+		s.autoProfile()
+	}
 	if s.updating && s.card != nil {
 		s.noROMs.SetChecked(s.card.NoROMs)
 	}
@@ -101,7 +105,33 @@ func (s *screen) releasePage() fyne.CanvasObject {
 	s.variantBox = container.NewVBox()
 	s.variantBox.Hide()
 	body := container.NewVBox(s.releaseCard, s.variantBox, container.NewHBox(other, layout.NewSpacer(), local), s.releaseLabel, s.progress)
-	return pageView(title(s.t("Which release?")), wrapped(s.t("The newest release is chosen for you.")), body, nil, back, s.stopLoad, next)
+	s.releaseLead = wrapped("")
+	return pageView(title(s.t("Which release?")), s.releaseLead, body, nil, back, s.stopLoad, next)
+}
+
+// fileText is a release file from this computer in words: its size, and the build
+// date and the kernel and graphics its name tells.
+func (s *screen) fileText(name string, size int64) string {
+	parts := []string{humanBytes(size)}
+	if t, ok := firmware.BuildDate(name); ok {
+		parts = append(parts, s.t("built %s", t.Format("2006-01-02")))
+	}
+	if k, g, ok := catalog.Variant(name); ok {
+		parts = append(parts, s.variantText(k, g))
+	}
+	return strings.Join(parts, " - ")
+}
+
+// releaseLeadText is the sentence under the Release page's title: how the release
+// shown was chosen.
+func (s *screen) releaseLeadText() string {
+	switch {
+	case s.localFile != "" && s.asset == nil:
+		return s.t("You chose a file from this computer.")
+	case s.asset != nil && len(s.assets) > 0 && s.assets[0].URL != s.asset.URL:
+		return s.t("You chose another release.")
+	}
+	return s.t("The newest release is chosen for you.")
 }
 
 func (s *screen) refreshRelease() {
@@ -109,9 +139,21 @@ func (s *screen) refreshRelease() {
 		return
 	}
 	c := s.releaseCard
+	if s.releaseLead != nil {
+		s.releaseLead.SetText(s.releaseLeadText())
+	}
 	switch {
+	case s.im != nil && s.asset == nil && s.localFile != "":
+		name := filepath.Base(s.localFile)
+		c.setText(shown(s.im.Version), name+"\n"+s.fileText(name, s.localSize)+" - "+s.t("%d device profiles", len(s.im.Profiles)))
+		c.setTag("")
 	case s.im != nil && (s.asset == nil || s.im.Source == s.asset.URL):
 		c.setText(shown(s.im.Version), filepath.Base(s.im.Source)+" - "+s.t("%d device profiles", len(s.im.Profiles)))
+		c.setTag("")
+	case s.asset == nil && s.localFile != "":
+		// being unpacked and checked
+		name := filepath.Base(s.localFile)
+		c.setText(name, s.fileText(name, s.localSize))
 		c.setTag("")
 	case s.asset != nil:
 		detail := s.t("%s to download", humanBytes(s.asset.Size))
@@ -182,7 +224,12 @@ func (s *screen) plainDriveTitle(d platform.Drive) string {
 	if builtInSlot(d) {
 		name = s.t("SD card in the built-in slot")
 	}
-	return fmt.Sprintf("%s - %.1f GB", name, float64(d.Size)/1e9)
+	return name + " - " + cardSize(d.Size)
+}
+
+// cardSize is the size of a card or drive as every page shows it, as in "62.6 GB".
+func cardSize(n int64) string {
+	return fmt.Sprintf("%.1f GB", float64(n)/1e9)
 }
 
 // driveLabel is a drive with its device path, where one line has to say it all.
@@ -219,8 +266,10 @@ func (s *screen) cardText() string {
 	case c.Installed:
 		name := c.Profile
 		if s.im != nil {
+			// a hidden copy at a board's old folder is named as the listed profile
+			id := firmware.ListedAs(s.im.Profiles, c.Profile)
 			for _, p := range s.im.Profiles {
-				if p.ID == c.Profile {
+				if p.ID == id {
 					name = shown(p.Name)
 				}
 			}
@@ -492,10 +541,8 @@ func (s *screen) inspectDrive(d platform.Drive) {
 				if s.card.Installed && s.updating {
 					s.noROMs.SetChecked(s.card.NoROMs)
 				}
-				if s.card.Installed {
-					s.autoProfile()
-				}
 			}
+			s.autoProfile()
 			s.setBusy(false)
 		})
 	}()
@@ -525,10 +572,15 @@ func (s *screen) consolePage() fyne.CanvasObject {
 }
 
 // consoleGroups are the release's profiles that match the search, tested and
-// experimental apart, in the release's order.
+// experimental apart (by the image's "experimental" flag, not by folder), in the
+// release's order. A hidden profile (a copy at a board's old folder, kept for older
+// flashers) is never listed.
 func consoleGroups(profiles []firmware.Profile, query string) (tested, experimental []firmware.Profile) {
 	words := strings.Fields(strings.ToLower(query))
 	for _, p := range profiles {
+		if p.Hidden {
+			continue
+		}
 		text := strings.ToLower(shown(p.Name) + " " + p.Name + " " + p.Console + " " + strings.Join(p.AlsoFor, " ") + " " + p.ID)
 		ok := true
 		for _, w := range words {
@@ -553,16 +605,22 @@ func (s *screen) refreshConsoles() {
 		return
 	}
 	s.consoleLead.SetText(s.t("Choose your console’s board and screen."))
+	last := s.lastProfile()
 	if s.card != nil && s.card.Profile != "" && s.im != nil {
-		carried := false
+		name := ""
 		for _, p := range s.im.Profiles {
-			if p.ID == s.card.Profile {
-				carried = true
-				s.consoleLead.SetText(s.t("The card was set up for %s. Change it if this card is for another console.", shown(p.Name)))
+			if p.ID == last {
+				name = shown(p.Name)
 			}
 		}
-		if !carried {
+		switch {
+		case name == "":
 			s.consoleLead.SetText(s.t("The card was set up for %s, which the chosen release does not carry. Choose your console below, or go back and choose another release.", shown(s.card.Profile)))
+		case s.updating:
+			s.consoleLead.SetText(s.t("The card was set up for %s. Change it if this card is for another console.", name))
+		default:
+			// a new installation: the card's profile is only a hint, the user picks
+			s.consoleLead.SetText(s.t("Last time, this card was set up for %s. Choose it again if it is still right.", name))
 		}
 	}
 	s.consoleList.RemoveAll()
@@ -580,6 +638,9 @@ func (s *screen) refreshConsoles() {
 			id := p.ID
 			item := newRadioItem(shown(p.Name), func() { s.chooseProfile(id) })
 			item.setSelected(p.ID == s.profile)
+			if p.ID == last && !s.updating {
+				item.setTag(s.t("last time"))
+			}
 			items = append(items, item)
 		}
 		s.consoleList.Add(container.NewGridWithColumns(3, items...))
@@ -596,7 +657,7 @@ func (s *screen) chooseProfile(id string) {
 	if s.busy {
 		return
 	}
-	s.profile = id
+	s.profile, s.profilePicked = id, true
 	s.logf("profile %s", id)
 	s.refreshConsoles()
 	s.ready()
@@ -640,11 +701,12 @@ func (s *screen) optionsPage() fyne.CanvasObject {
 	s.fixInfo = wrapped("")
 	s.fixBox = noteCard(notePlain, fixRow, s.fixInfo)
 	s.fixBox.Hide()
-	custom := widget.NewButton(s.t("Choose custom Android DTB..."), s.chooseCustom)
+	// one level: every advanced setting is shown at once under Advanced..., each
+	// with its help directly below its control
 	s.advancedBox = container.NewVBox(
 		heading(s.t("Boot options")), s.bootloaderSection(), widget.NewSeparator(),
-		heading(s.t("DTB")), s.imageDTBSection(), wrapped(s.t(firmware.CustomWarning)), container.NewHBox(custom), widget.NewSeparator(),
-		s.systemSection())
+		heading(s.t("DTB")), s.imageDTBSection(), widget.NewSeparator(),
+		heading(s.t("System image")), s.systemSection())
 	s.advancedBox.Hide()
 	var advanced *widget.Button
 	advanced = quiet(s.t("Advanced..."), func() {
@@ -727,8 +789,8 @@ func (s *screen) summarize() {
 		add("Release", s.releaseText())
 	}
 	if s.drive != nil {
-		// the device path is in the details log
-		add("Card", s.driveTitle(*s.drive))
+		// as the card's row on the Card page shows it, with its device path
+		add("Card", s.plainDriveTitle(*s.drive)+" - "+s.drive.Path)
 	}
 	add("Console", s.profileName())
 	if s.updating {
@@ -784,7 +846,7 @@ func (s *screen) summarize() {
 			tick = s.t("This is the right disk. Write to it.")
 		case s.drive.Large():
 			kind = noteError
-			size := fmt.Sprintf("%.0f GB", float64(s.drive.Size)/1e9)
+			size := cardSize(s.drive.Size)
 			lines = append(lines, heading(s.t("Is this really your SD card?")), wrapped(s.t("%s (%s) is larger than most SD cards, or it says it is a hard drive. If it is not your SD card, everything on it is lost for good. Check the size and the name once more.", shown(s.drive.Name), size)))
 			tick = s.t("This %s drive (%s) is my SD card. Write to it.", size, shown(s.drive.Name))
 		}

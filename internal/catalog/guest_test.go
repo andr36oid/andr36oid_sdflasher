@@ -296,3 +296,47 @@ func TestGuestReadsThePublishedManifests(t *testing.T) {
 		}
 	}
 }
+
+// A game system packed with xz -T0 (many blocks) and cut into parts at odd places
+// is unpacked like the release image, and its progress counts the unpacked bytes
+// of the image, not the packed ones: a time left worked out from it is honest.
+func TestGuestUnpackCountsUnpackedBytes(t *testing.T) {
+	g, _, image, dir := guestFixture(t)
+	var packed bytes.Buffer
+	w, e := uxz.WriterConfig{BlockSize: 64 << 10}.NewWriter(&packed)
+	if e != nil {
+		t.Fatal(e)
+	}
+	w.Write(image)
+	w.Close()
+	b := packed.Bytes()
+	var parts []string
+	for i, cut := range [][2]int{{0, 7}, {7, len(b) / 3}, {len(b) / 3, len(b)}} {
+		p := filepath.Join(dir, "part"+string(rune('0'+i)))
+		os.WriteFile(p, b[cut[0]:cut[1]], 0600)
+		parts = append(parts, p)
+	}
+	var last, total int64
+	out, e := unpackGuest(context.Background(), g, parts, dir, func(phase string, done, all int64) {
+		if phase != "unpack" {
+			t.Fatal(phase)
+		}
+		last, total = done, all
+	})
+	if e != nil {
+		t.Fatal(e)
+	}
+	got, _ := os.ReadFile(out)
+	if !bytes.Equal(got, image) {
+		t.Fatal("wrong image")
+	}
+	if total != int64(len(image)) || last != total {
+		t.Fatalf("progress %d of %d, want the image's %d bytes", last, total, len(image))
+	}
+	// an archive that unpacks to another size than the manifest says is refused
+	os.Remove(out)
+	g.Image.Size--
+	if _, e = unpackGuest(context.Background(), g, parts, dir, nil); !ErrDamagedDownload.Is(e) {
+		t.Fatal("wrong size accepted", e)
+	}
+}

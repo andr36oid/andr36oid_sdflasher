@@ -296,14 +296,14 @@ func execute(ctx context.Context, raw Device, dst *guardedDevice, im *firmware.I
 	// start and end of each range: reading all of it took as long as the verify, and
 	// updates read everything they replace into the recovery backup anyway.
 	const sample = 4 << 20
-	notify(Progress{Phase: "preflight", Name: "Reading the card before writing"})
+	notify(Progress{Phase: "preflight", Name: ReadCheck})
 	for i, w := range p.Writes {
 		for _, r := range [][2]int64{{0, min(sample, w.Length)}, {max(0, w.Length-sample), min(sample, w.Length)}} {
 			if _, e = firmware.Hash(ctx, io.NewSectionReader(dst, w.Offset+r[0], r[1]), r[1], nil); e != nil {
 				return fmt.Errorf("card read check failed: %w; %w", e, StateUntouched.New())
 			}
 		}
-		notify(Progress{Phase: "preflight", Name: "Reading the card before writing", Done: int64(i + 1), Total: int64(len(p.Writes))})
+		notify(Progress{Phase: "preflight", Name: ReadCheck, Done: int64(i + 1), Total: int64(len(p.Writes))})
 	}
 	// A counterfeit card stops here, before the release is written (capacity.go).
 	if p.Mode == "install" && len(p.Probes) > 0 {
@@ -314,7 +314,8 @@ func execute(ctx context.Context, raw Device, dst *guardedDevice, im *firmware.I
 			if Classify(e) == FailureCapacity {
 				return e
 			}
-			return fmt.Errorf("%w; %w", e, StateIncomplete.New())
+			// only the test markers touched the card, nothing of the release
+			return fmt.Errorf("%w; %w", e, StateCardTest.New())
 		}
 	}
 	var backup *Backup
@@ -364,6 +365,13 @@ func execute(ctx context.Context, raw Device, dst *guardedDevice, im *firmware.I
 	notify(Progress{Phase: "preflight", Name: SpeedCheck})
 	speed, e := measureLatency(ctx, dst, p)
 	if e != nil {
+		if p.Mode == "install" {
+			// a new card has only had test blocks so far, nothing of the release
+			if wp := WriteProtectedError(e); wp != nil && !dst.wrote.Load() {
+				return wp
+			}
+			return fmt.Errorf("%w; %w", e, StateCardTest.New())
+		}
 		return fail(e)
 	}
 	var bulkBytes int64
@@ -553,6 +561,13 @@ type guardedDevice struct {
 // SpeedCheck is the progress of the speed check, the first step that writes to the
 // card (Progress.Writing).
 const SpeedCheck = "Checking card speed"
+
+// OpenCheck is the progress of opening the card for the write (the helper does it
+// before Execute): nothing is written then.
+const OpenCheck = "Opening the card"
+
+// ReadCheck is the progress of reading the card before the first write.
+const ReadCheck = "Reading the card before writing"
 
 // SizeCheck is the progress of checkCapacity, which writes markers (and puts back
 // what was there).

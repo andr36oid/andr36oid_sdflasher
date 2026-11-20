@@ -412,6 +412,7 @@ func Worker(job string) error {
 		if e = ctx.Err(); e != nil {
 			return e
 		}
+		emit(Result{Progress: &flash.Progress{Phase: "preflight", Name: flash.OpenCheck}})
 		h, e := platform.Open(d, true)
 		if e != nil {
 			if _, busy := platform.Busy(e.Error()); busy {
@@ -443,7 +444,8 @@ func Worker(job string) error {
 					return errors.New(firmware.BootloaderOnlySD)
 				}
 			} else {
-				emit(Result{Progress: &flash.Progress{Phase: "Bootloader"}})
+				// looked up and checked before anything is written: part of the checks
+				emit(Result{Progress: &flash.Progress{Phase: "preflight", Name: "Preparing the bootloader"}})
 				loader, result.Bootloader, e = firmware.ResolveBootOptions(context.Background(), *req.Bootloader, im, firmware.ImageBootTarget(im, req.Profile), dir)
 				if e != nil {
 					return e

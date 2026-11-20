@@ -352,3 +352,14 @@ func (f fillLast) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 		y += h + theme.Padding()
 	}
 }
+
+// optionRow is one setting: its label and control on a line, its help directly
+// below, and below that what only shows sometimes (notes hidden while empty).
+func optionRow(label, control fyne.CanvasObject, help string, more ...fyne.CanvasObject) *fyne.Container {
+	rows := []fyne.CanvasObject{container.NewBorder(nil, nil, nil, control, label)}
+	if help != "" {
+		rows = append(rows, wrapped(help))
+	}
+	rows = append(rows, more...)
+	return container.New(layout.NewCustomPaddedVBoxLayout(-theme.Padding()), rows...)
+}

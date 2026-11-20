@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/layout"
 )
 
@@ -329,11 +330,13 @@ func TestHarnessBadCards(t *testing.T) {
 		setup func(*fakeCard, *Plan)
 		kind  FailureKind
 		text  string
+		state *i18n.Format
 	}{
-		{"io error mid image", func(c *fakeCard, p *Plan) { c.failAt = p.Writes[0].Offset + 1<<20 }, FailureDevice, "input/output error"},
-		{"io error in guest", func(c *fakeCard, p *Plan) { c.failAt = p.Writes[len(p.Writes)-3].Offset }, FailureDevice, "input/output error"},
-		{"short writes", func(c *fakeCard, p *Plan) { c.short = true }, FailureDevice, "short write"},
-		{"reader vanishes", func(c *fakeCard, p *Plan) { c.vanishAfter = 6 }, FailureDevice, "no such device"},
+		{"io error mid image", func(c *fakeCard, p *Plan) { c.failAt = p.Writes[0].Offset + 1<<20 }, FailureDevice, "input/output error", StateIncomplete},
+		{"io error in guest", func(c *fakeCard, p *Plan) { c.failAt = p.Writes[len(p.Writes)-3].Offset }, FailureDevice, "input/output error", StateIncomplete},
+		// these stop in the card test: only its test blocks were written
+		{"short writes", func(c *fakeCard, p *Plan) { c.short = true }, FailureDevice, "short write", StateCardTest},
+		{"reader vanishes", func(c *fakeCard, p *Plan) { c.vanishAfter = 6 }, FailureDevice, "no such device", StateCardTest},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			im, boot, _, card, _, p := harnessPlan(t)
@@ -343,7 +346,7 @@ func TestHarnessBadCards(t *testing.T) {
 			if e == nil {
 				t.Fatal("bad card written without an error; writes:", dev.writes.Load())
 			}
-			if Classify(e) != c.kind || !strings.Contains(e.Error(), c.text) || !StateIncomplete.Is(e) {
+			if Classify(e) != c.kind || !strings.Contains(e.Error(), c.text) || !c.state.Is(e) {
 				t.Fatalf("%q: %v", Classify(e), e)
 			}
 			if len(FailureHints(Classify(e), false)) == 0 {
@@ -707,5 +710,30 @@ func TestUpdateRefusesWhenTheGameSystemIsInTheWay(t *testing.T) {
 	_, e := Build(im, card, card.Table.Size, "update", "Panels/Panel4", false, 0)
 	if !ErrGuestInTheWay.Is(e) {
 		t.Fatal(e)
+	}
+}
+
+// A card that stops answering in the card tests (as the C13 card did in the speed
+// check) is not called incomplete: nothing of the release was written, only test
+// blocks, and the error says so.
+func TestHarnessCardDiesInCardTest(t *testing.T) {
+	im, boot, _, card, _, p := harnessPlan(t)
+	dev := newFake(card)
+	// every write of the size check (marker and restore) works, then the card is gone
+	dev.vanishAfter = int64(2 * len(p.Probes))
+	var last string
+	e := Execute(context.Background(), dev, im, p, boot, t.TempDir(), func(pr Progress) {
+		if pr.Phase == "preflight" {
+			last = pr.Name
+		}
+	})
+	if e == nil {
+		t.Fatal("no error")
+	}
+	if last != SizeCheck && last != SpeedCheck {
+		t.Fatal("failed after the card test:", last)
+	}
+	if !StateCardTest.Is(e) || StateIncomplete.Is(e) || Classify(e) != FailureDevice {
+		t.Fatalf("%q: %v", Classify(e), e)
 	}
 }
