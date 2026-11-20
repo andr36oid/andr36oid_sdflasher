@@ -49,3 +49,57 @@ func Split(assets []Asset) (first, others []Asset) {
 	}
 	return first, others
 }
+
+// Of is the images of one release, in the order of the list.
+func Of(assets []Asset, release string) []Asset {
+	var list []Asset
+	for _, a := range assets {
+		if a.Release == release {
+			list = append(list, a)
+		}
+	}
+	return list
+}
+
+// Matching is the image of a release with this kernel line and graphics driver; ok is
+// false when the release has none.
+func Matching(assets []Asset, release, kernel, gpu string) (Asset, bool) {
+	for _, a := range Of(assets, release) {
+		if k, g, ok := Variant(a.Name); ok && k == kernel && g == gpu {
+			return a, true
+		}
+	}
+	return Asset{}, false
+}
+
+// SplitFor is Split for updating a card with this kernel line and graphics driver:
+// each release shows its image of that kind first. A release without one shows what
+// Split shows, so that the choice can say the kind is missing. With kernel or gpu ""
+// it is Split.
+func SplitFor(assets []Asset, kernel, gpu string) (first, others []Asset) {
+	if kernel == "" || gpu == "" {
+		return Split(assets)
+	}
+	has := map[string]bool{}
+	for _, a := range assets {
+		if k, g, ok := Variant(a.Name); ok && k == kernel && g == gpu {
+			has[a.Release] = true
+		}
+	}
+	plain, _ := Split(assets)
+	shown := map[string]bool{}
+	for _, a := range plain {
+		if !has[a.Release] {
+			shown[a.URL+"\x00"+a.Name] = true
+		}
+	}
+	for _, a := range assets {
+		k, g, ok := Variant(a.Name)
+		if has[a.Release] && ok && k == kernel && g == gpu || !has[a.Release] && shown[a.URL+"\x00"+a.Name] {
+			first = append(first, a)
+		} else {
+			others = append(others, a)
+		}
+	}
+	return first, others
+}

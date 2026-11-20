@@ -651,5 +651,22 @@
   "A web page answered instead of GitHub. This network may need you to sign in first (as in a hotel, a school or on public Wi-Fi): open any web page in your browser, sign in, then try again. A proxy or a security program can also cause this.": "A web page answered instead of GitHub. This network may need you to sign in first (as in a hotel, a school or on public Wi-Fi): open any web page in your browser, sign in, then try again. A proxy or a security program can also cause this.",
   "The flasher can't save its files in the folder %s. Check that this folder and the disk it is on can be written to (not read-only, not full), then try again.": "The flasher can't save its files in the folder %s. Check that this folder and the disk it is on can be written to (not read-only, not full), then try again.",
   "The release image is no longer where it was (%s). It was moved, renamed or deleted, or the cached files were cleared. Choose the release again on the Release page, then write the card.": "The release image is no longer where it was (%s). It was moved, renamed or deleted, or the cached files were cleared. Choose the release again on the Release page, then write the card.",
-  "The card could not be read": "The card could not be read"
+  "The card could not be read": "The card could not be read",
+  "the %s kernel with Vulkan": "the %s kernel with Vulkan",
+  "the %s kernel with OpenGL ES only": "the %s kernel with OpenGL ES only",
+  "OpenGL ES only": "OpenGL ES only",
+  "The kernel changes from %s to %s and the graphics driver from %s to %s. Apps, settings, saves and games stay.": "The kernel changes from %s to %s and the graphics driver from %s to %s. Apps, settings, saves and games stay.",
+  "The kernel changes from %s to %s. Apps, settings, saves and games stay.": "The kernel changes from %s to %s. Apps, settings, saves and games stay.",
+  "The graphics driver changes from %s to %s. Apps, settings, saves and games stay.": "The graphics driver changes from %s to %s. Apps, settings, saves and games stay.",
+  "This is what the card runs now.": "This is what the card runs now.",
+  "This card runs %s. The chosen image does not say which kernel it has: it was made before the releases with four images.": "This card runs %s. The chosen image does not say which kernel it has: it was made before the releases with four images.",
+  "This card runs %s. The update keeps that.": "This card runs %s. The update keeps that.",
+  "This card runs %s. You chose %s instead.": "This card runs %s. You chose %s instead.",
+  "This card runs %s. Release %s has no image of that kind. Choose one of its images below, or choose another release.": "This card runs %s. Release %s has no image of that kind. Choose one of its images below, or choose another release.",
+  "This card runs %s. The chosen file has %s. To install it anyway, choose Advanced...": "This card runs %s. The chosen file has %s. To install it anyway, choose Advanced...",
+  "This card runs the %s kernel. Which graphics driver it has could not be read.": "This card runs the %s kernel. Which graphics driver it has could not be read.",
+  "Choose the image to install:": "Choose the image to install:",
+  "Which kernel and graphics driver this card runs could not be read.": "Which kernel and graphics driver this card runs could not be read.",
+  "This card runs %s. An update normally keeps that. Choose another kind only if you want to change it.": "This card runs %s. An update normally keeps that. Choose another kind only if you want to change it.",
+  "Use this image": "Use this image"
 }

@@ -75,6 +75,12 @@ type Card struct {
 	// Guest is the game system in the card's own partition, nil for none. An update
 	// keeps it as it is.
 	Guest *CardGuest `json:"guest,omitempty"`
+	// Kernel ("4.19", "5.10") and Graphics ("gles", "vulkan") of the andr36oid on it,
+	// "" where the card does not say (firmware.ReadCardVariant). An update keeps them
+	// unless the user chooses otherwise. VariantFrom: where Kernel was read from.
+	Kernel      string `json:"kernel,omitempty"`
+	Graphics    string `json:"graphics,omitempty"`
+	VariantFrom string `json:"variant_from,omitempty"`
 }
 
 // CardGuest is what a card's record (GuestFile) says of its game system.
@@ -281,6 +287,8 @@ func InspectCard(f io.ReaderAt, size int64) (Card, error) {
 	_, roms := t.Find("EASYROMS")
 	c.NoROMs = !roms
 	c.Table = t
+	v := firmware.ReadCardVariant(boot)
+	c.Kernel, c.Graphics, c.VariantFrom = v.Kernel, v.Graphics, v.From
 	c.Installed = true
 	_, c.Treble = t.Find("vendor")
 	return c, nil

@@ -119,7 +119,9 @@ func TestStepsNeedWhatComesBefore(t *testing.T) {
 	if s.stepDone(stepCard) || !s.action.Disabled() {
 		t.Fatal("a new install on an 8 GB card must not be writable")
 	}
-	s.drive = &platform.Drive{Path: "x", Size: 16e9}
+	// the update sent the page back to its Card step, which lists the cards again
+	// (none here): the card is chosen anew
+	s.drive, s.card = &platform.Drive{Path: "x", Size: 16e9}, &flash.Card{Installed: false}
 	s.ready()
 	if !s.reachable(stepWrite) || s.sideSteps[stepWrite].Disabled() {
 		t.Fatal("new install with everything chosen must reach the write page")

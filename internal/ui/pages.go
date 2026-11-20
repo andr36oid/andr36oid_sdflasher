@@ -22,7 +22,7 @@ import (
 func (s *screen) stepButtons(step int) (*widget.Button, *widget.Button) {
 	var back *widget.Button
 	if step > 0 {
-		back = widget.NewButton(s.t("Back"), func() { s.showStep(step - 1) })
+		back = widget.NewButton(s.t("Back"), func() { s.showStep(s.before(step)) })
 		s.backs[step] = back
 	}
 	next := widget.NewButton(s.t("Next"), func() { s.next(step) })
@@ -98,7 +98,9 @@ func (s *screen) releasePage() fyne.CanvasObject {
 	})
 	s.stopLoad.Hide()
 	back, next := s.stepButtons(stepImage)
-	body := container.NewVBox(s.releaseCard, container.NewHBox(other, layout.NewSpacer(), local), s.releaseLabel, s.progress)
+	s.variantBox = container.NewVBox()
+	s.variantBox.Hide()
+	body := container.NewVBox(s.releaseCard, s.variantBox, container.NewHBox(other, layout.NewSpacer(), local), s.releaseLabel, s.progress)
 	return pageView(title(s.t("Which release?")), wrapped(s.t("The newest release is chosen for you.")), body, nil, back, s.stopLoad, next)
 }
 
@@ -131,6 +133,7 @@ func (s *screen) refreshRelease() {
 		c.setText(s.t("Choose a release to see its supported consoles and panels."), "")
 		c.setTag("")
 	}
+	s.refreshVariant()
 	// Stop is there while a release is downloaded or checked, nothing is written then
 	if s.stopLoad != nil {
 		if s.busy && s.cancel != nil && s.progress.Visible() {

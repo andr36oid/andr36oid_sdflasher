@@ -47,7 +47,7 @@ func (s *screen) stepDone(step int) bool {
 	case stepStart:
 		return s.task != taskFix
 	case stepImage:
-		return s.im != nil
+		return s.im != nil && s.imageOK()
 	case stepCard:
 		return s.drive != nil && s.card != nil && s.cardProblem() == ""
 	case stepConsole:
@@ -58,10 +58,45 @@ func (s *screen) stepDone(step int) bool {
 	return false
 }
 
+// order is the steps in the order they come: an update reads the card first, so
+// that the Release page can offer the image of the kind the card runs.
+func (s *screen) order() [stepCount]int {
+	if s.task == taskUpdate {
+		return [stepCount]int{stepStart, stepCard, stepImage, stepConsole, stepOptions, stepWrite}
+	}
+	return [stepCount]int{stepStart, stepImage, stepCard, stepConsole, stepOptions, stepWrite}
+}
+
+// position is where a step comes in order().
+func (s *screen) position(step int) int {
+	for i, x := range s.order() {
+		if x == step {
+			return i
+		}
+	}
+	return 0
+}
+
+// after and before are the steps that come after and before one, or -1.
+func (s *screen) after(step int) int {
+	if i := s.position(step) + 1; i < stepCount {
+		return s.order()[i]
+	}
+	return -1
+}
+
+func (s *screen) before(step int) int {
+	if i := s.position(step) - 1; i >= 0 {
+		return s.order()[i]
+	}
+	return -1
+}
+
 // reachable: every step before it is done.
 func (s *screen) reachable(step int) bool {
-	for i := 0; i < step; i++ {
-		if !s.stepDone(i) {
+	o := s.order()
+	for i := 0; i < s.position(step); i++ {
+		if !s.stepDone(o[i]) {
 			return false
 		}
 	}
@@ -169,19 +204,21 @@ func (s *screen) next(step int) {
 			return
 		}
 	}
-	s.showStep(step + 1)
+	s.showStep(s.after(step))
 }
 
 // sideBar is the fixed column on the left: the name, the version, the steps, and
 // at the bottom the language and the log.
 func (s *screen) sideBar() fyne.CanvasObject {
 	steps := container.NewVBox()
+	// the buttons are positions in order(); which step each shows can change
 	for i := range s.sideSteps {
-		step := i
-		b := widget.NewButton(s.t(stepNames[i]), func() {
+		pos := i
+		b := widget.NewButton(s.t(stepNames[s.order()[i]]), func() {
 			if s.sideLocked() {
 				return
 			}
+			step := s.order()[pos]
 			if s.inSteps || s.reachable(step) {
 				s.showStep(step)
 			}
@@ -227,19 +264,21 @@ func (s *screen) refreshSteps() {
 	}
 	// a step that lost what it needs (card removed, new release) sends the user back
 	if s.inSteps && !s.busy && !s.reachable(s.step) {
-		for s.step > 0 && !s.reachable(s.step) {
-			s.step--
+		for s.step != stepStart && !s.reachable(s.step) {
+			s.step = s.before(s.step)
 		}
 		s.showStep(s.step)
 		return
 	}
-	for i, b := range s.sideSteps {
+	order, now := s.order(), s.position(s.step)
+	for pos, b := range s.sideSteps {
+		i := order[pos]
 		b.SetText(s.t(stepNames[i]))
 		switch {
 		case i == s.step:
 			b.SetIcon(theme.NavigateNextIcon())
 			b.Importance = widget.HighImportance
-		case i < s.step && s.stepDone(i):
+		case pos < now && s.stepDone(i):
 			b.SetIcon(theme.ConfirmIcon())
 			b.Importance = widget.LowImportance
 		default:
@@ -251,13 +290,13 @@ func (s *screen) refreshSteps() {
 		switch {
 		case s.sideLocked() && s.reachable(i):
 			b.Enable()
-			s.sideDims[i].Show()
+			s.sideDims[pos].Show()
 		case !s.reachable(i):
 			b.Disable()
-			s.sideDims[i].Hide()
+			s.sideDims[pos].Hide()
 		default:
 			b.Enable()
-			s.sideDims[i].Hide()
+			s.sideDims[pos].Hide()
 		}
 		b.Refresh()
 	}
@@ -274,7 +313,7 @@ func (s *screen) refreshSteps() {
 		}
 		ok := s.stepDone(i)
 		if i == stepImage {
-			ok = s.im != nil || s.asset != nil
+			ok = (s.im != nil || s.asset != nil) && s.variantOK()
 		}
 		if !s.busy && ok {
 			s.nexts[i].Enable()

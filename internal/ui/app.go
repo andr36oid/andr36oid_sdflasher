@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -74,6 +75,10 @@ type screen struct {
 	stopLoad                        *widget.Button
 	dtbLabel                        *widget.Label
 	dtbFile, dtbManifest, dtbLookup string
+	// an update: the kind (kindKey) the user chose on purpose, for the card with
+	// the fingerprint kindFor; variantBox says what the card runs (variant.go)
+	kindPick, kindFor string
+	variantBox        *fyne.Container
 
 	// card
 	drives     []platform.Drive
@@ -295,6 +300,7 @@ func (s *screen) ready() {
 	if s.action == nil {
 		return
 	}
+	s.preselect()
 	if s.bootloaderOptions != nil {
 		s.bootloaderOptions.setTarget(s.im != nil, s.drive != nil && s.drive.Fixed || s.card != nil && s.card.DataCard)
 	}
@@ -500,7 +506,7 @@ func (s *screen) loadImage(p string, origin ...string) {
 			s.populateImage()
 			s.autoProfile()
 			if s.inSteps && s.step == stepImage {
-				s.showStep(stepCard)
+				s.showStep(s.after(stepImage))
 			}
 			s.ready()
 		})
@@ -656,8 +662,18 @@ func (s *screen) releases() {
 		s.info(s.t("No image downloads available"), s.t("No disk images are attached to andr36oid/releases yet. You can choose an image from disk."), s.win)
 		return
 	}
-	// each release's recommended image first; the other kernels only on request
+	// each release's recommended image first; the other kernels only on request.
+	// An update shows each release's image of the card's kind; another kind is
+	// chosen only on purpose, under Advanced... on the Release page.
 	first, others := s.assets, s.otherAssets
+	ck, cg := s.cardKind()
+	if p := s.picked(); p != "" {
+		ck, cg, _ = strings.Cut(p, "-")
+	}
+	if ck != "" && cg != "" {
+		first, others = catalog.SplitFor(s.allAssets(), ck, cg)
+		others = nil
+	}
 	shown := first
 	labels := func(list []catalog.Asset) []string {
 		var opts []string
