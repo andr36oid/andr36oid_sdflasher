@@ -1391,6 +1391,9 @@ public final class MainActivity extends Activity {
             WorkState.noROMs = WorkState.card.optBoolean("no_roms");
             WorkState.autoProfile();
             WorkState.message = "Ready";
+          } catch (java.io.IOException e) {
+            // the reader could not be opened or talked to (as when writing)
+            throw withHints(e, Mobile.readerFailureHints());
           }
         });
   }

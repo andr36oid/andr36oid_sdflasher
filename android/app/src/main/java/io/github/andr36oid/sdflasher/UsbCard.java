@@ -13,6 +13,7 @@ import java.util.concurrent.Callable;
 import me.jahnen.libaums.core.driver.BlockDeviceDriver;
 import me.jahnen.libaums.core.driver.BlockDeviceDriverFactory;
 import me.jahnen.libaums.core.driver.scsi.commands.sense.MediaNotInserted;
+import me.jahnen.libaums.core.usb.PipeException;
 import me.jahnen.libaums.core.usb.UsbCommunication;
 import me.jahnen.libaums.libusbcommunication.LibusbCommunication;
 
@@ -236,7 +237,17 @@ final class UsbCard {
                   + " reader, plug it in again and try once more, or use the flasher for Windows,"
                   + " macOS or Linux: %s",
               DESKTOP_DOWNLOAD);
-      connection.flush();
+      connection.interfaceId = iface.getId();
+      try {
+        connection.flush();
+      } catch (IOException e) {
+        // the plain reader text first, the raw cause under "Technical details"
+        throw new ReaderException(
+            context,
+            "The card reader does not answer the way the app expects, so it cannot be used from"
+                + " this device. Try another reader, or use the flasher for Windows, macOS or Linux: %s",
+            e);
+      }
       return connection;
     } catch (Exception e) {
       usb.close();
@@ -376,9 +387,38 @@ final class UsbCard {
           });
     }
 
+    /** A command the reader refused by stalling; the reader was reset and can be used again. */
+    static final class StalledCommand extends IOException {
+      StalledCommand(String text, Throwable cause) {
+        super(text, cause);
+      }
+    }
+
+    /** USB interface number for the Bulk-Only reset; set by open(). */
+    int interfaceId;
+
+    /** Whether the last command() saw a stalled data or status phase. */
+    private boolean lastStalled;
+
+    /**
+     * Bulk-Only Reset Recovery (BOT 1.0, 5.3.4): Bulk-Only Mass Storage Reset, then clear
+     * the halt on bulk-in and bulk-out. A failure here is added to e, which is thrown.
+     */
+    private IOException resetRecovery(IOException e) {
+      try {
+        usb.controlTransfer(0x21, 0xff, 0, interfaceId, new byte[0], 0);
+        usb.clearFeatureHalt(usb.getInEndpoint());
+        usb.clearFeatureHalt(usb.getOutEndpoint());
+      } catch (IOException | RuntimeException failed) {
+        e.addSuppressed(failed);
+      }
+      return e;
+    }
+
     private int command(byte[] cdb, byte[] data) throws IOException {
       ByteBuffer cbw = ByteBuffer.allocate(31).order(ByteOrder.LITTLE_ENDIAN);
       int current = ++tag;
+      lastStalled = false;
       cbw.putInt(0x43425355)
           .putInt(current)
           .putInt(data.length)
@@ -387,18 +427,55 @@ final class UsbCard {
           .put((byte) cdb.length)
           .put(cdb);
       cbw.rewind();
-      if (usb.bulkOutTransfer(cbw) != 31) throw new IOException("Short SCSI command transfer");
+      try {
+        if (usb.bulkOutTransfer(cbw) != 31) throw new IOException("Short SCSI command transfer");
+      } catch (PipeException e) {
+        // BOT 6.6.1: a device stalls a CBW it does not take; the host does reset recovery.
+        throw resetRecovery(new StalledCommand("The reader stalled the SCSI command", e));
+      }
       if (data.length > 0) {
-        ByteBuffer buffer = ByteBuffer.wrap(data);
-        while (buffer.hasRemaining())
-          if (usb.bulkInTransfer(buffer) <= 0) throw new IOException("Short SCSI data transfer");
+        try {
+          // One transfer: a short packet ends the data phase (BOT 6.7.2, Hi > Di).
+          if (usb.bulkInTransfer(ByteBuffer.wrap(data)) <= 0)
+            throw new IOException("Short SCSI data transfer");
+        } catch (PipeException e) {
+          // BOT 6.7.2: the device may end the data phase with a stall; clear it, read the CSW.
+          lastStalled = true;
+          usb.clearFeatureHalt(usb.getInEndpoint());
+        }
       }
       ByteBuffer csw = ByteBuffer.allocate(13).order(ByteOrder.LITTLE_ENDIAN);
-      if (usb.bulkInTransfer(csw) != 13) throw new IOException("Short SCSI status transfer");
+      int length;
+      try {
+        length = usb.bulkInTransfer(csw);
+      } catch (PipeException e) {
+        // BOT 5.3.3: clear the halt on bulk-in and read the CSW once more.
+        lastStalled = true;
+        usb.clearFeatureHalt(usb.getInEndpoint());
+        csw.clear();
+        try {
+          length = usb.bulkInTransfer(csw);
+        } catch (PipeException again) {
+          throw resetRecovery(new StalledCommand("The reader stalled the SCSI status twice", again));
+        }
+      }
+      if (length != 13)
+        throw resetRecovery(new IOException("Short SCSI status transfer"));
       csw.rewind();
-      if (csw.getInt() != 0x53425355 || csw.getInt() != current || csw.getInt() != 0)
-        throw new IOException("Invalid SCSI command status");
-      return (csw.get() & 255);
+      int signature = csw.getInt(), tagBack = csw.getInt();
+      long residue = csw.getInt() & 0xffffffffL;
+      int status = csw.get() & 255;
+      // BOT 6.3: status 0 and 1 are meaningful with a residue up to the data length;
+      // a refused command may leave data untransferred. A passed command must have none.
+      if (signature != 0x53425355
+          || tagBack != current
+          || status > 2
+          || (status == 0 && residue != 0)
+          || (status == 1 && residue > data.length))
+        throw resetRecovery(new IOException("Invalid SCSI command status"));
+      if (status == 2)
+        throw resetRecovery(new IOException("SCSI phase error"));
+      return status;
     }
 
     @Override
@@ -409,15 +486,29 @@ final class UsbCard {
           () -> {
             byte[] cdb = new byte[10];
             cdb[0] = 0x35;
-            int status = command(cdb, new byte[0]);
+            int status;
+            try {
+              status = command(cdb, new byte[0]);
+            } catch (StalledCommand refused) {
+              // Some readers refuse the cache command by stalling; reset, it is unsupported.
+              flushSupported = false;
+              return null;
+            }
             if (status == 0) return null;
             if (status == 1) {
+              boolean stalled = lastStalled;
               byte[] sense = new byte[18];
-              if (command(new byte[] {3, 0, 0, 0, 18, 0}, sense) == 0
-                  && (sense[2] & 15) == 5
-                  && (sense[12] == 0x20 || sense[12] == 0x24)) {
-                // Some flash readers do not implement cache commands. All writes are
-                // synchronous USB commands and read-back still bypasses host caches.
+              int key = -1;
+              try {
+                if (command(new byte[] {3, 0, 0, 0, 18, 0}, sense) == 0) key = sense[2] & 15;
+              } catch (StalledCommand s) {
+                if (!stalled) throw s;
+              }
+              if ((key == 5 && (sense[12] == 0x20 || sense[12] == 0x24))
+                  || (stalled && key != 3 && key != 4)) {
+                // Some flash readers do not implement cache commands, or refuse them with
+                // a stall. All writes are synchronous USB commands and read-back still
+                // bypasses host caches. A medium or hardware error is still a failure.
                 flushSupported = false;
                 return null;
               }
