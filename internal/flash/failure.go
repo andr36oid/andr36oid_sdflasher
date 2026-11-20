@@ -178,4 +178,4 @@ func (d deviceErrors) WriteAt(b []byte, off int64) (int, error) {
 	return n, DeviceFailure(e)
 }
 
-func (d deviceErrors) Sync() error { return DeviceFailure(d.Device.Sync()) }
+func (d deviceErrors) Sync() error { return DeviceFailure(flush(d.Device, hostOS)) }
