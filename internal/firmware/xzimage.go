@@ -264,7 +264,7 @@ func stageXZ(ctx context.Context, src, dir string, progress func(int64, int64), 
 		e = unpackXZBlocks(ctx, in, dst, layout, progress, digest)
 	}
 	if e != nil {
-		return "", e
+		return "", SpaceError(dir, need, e)
 	}
 	if e = dst.Sync(); e != nil {
 		return "", e

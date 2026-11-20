@@ -81,6 +81,10 @@ var (
 		anyOf("write protect", "write-protect", "read-only file system", "readonly file system"))
 	CauseNameTooLong = NewCause("A file path is too long for this computer. Move the image to a folder with a short path (for example C:\\andr36oid or your Downloads folder), then choose it again.",
 		anyOf("file name too long", "filename or extension is too long", "name too long", "path too long"))
+	// CauseElevationRefused: the administrator prompt was cancelled or refused
+	// (platform.ErrElevationRefused), so the helper never ran.
+	CauseElevationRefused = NewCause("Administrator access was not given: the request was cancelled, or the password was not accepted. The flasher needs it to read and write the card, and only for that.",
+		anyOf("administrator access was not given"))
 	CausePermission = NewCause("The system did not let the flasher open a file or the card. Allow administrator access when you are asked. On a Mac, allow the flasher access to removable volumes in Privacy & Security; on Windows, security software (Controlled folder access or an antivirus) can block it. Then try again.",
 		anyOf("permission denied", "access is denied", "operation not permitted", "access denied", "not authorized", "authorization failed"))
 	CauseFileGone = NewCause("A file the flasher needs is no longer there: it may have been moved, renamed or deleted, or the drive it was on was removed. Choose it again.",

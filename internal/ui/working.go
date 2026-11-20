@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -46,6 +47,14 @@ func (s *screen) confirm() {
 	if !s.writable() || s.im == nil || s.card == nil || s.drive == nil {
 		return
 	}
+	if e := imageStillThere(s.im); e != nil {
+		// found now, before the administrator prompt: the release is chosen again
+		s.logf("image gone: %v", e)
+		s.dropImage()
+		s.backToSetup(stepWrite)
+		s.showError(fmt.Errorf("%w; %w", e, flash.StateUntouched.New()))
+		return
+	}
 	g := s.guestOffer()
 	opts := flash.Options{}
 	if g != nil {
@@ -63,6 +72,22 @@ func (s *screen) confirm() {
 		}
 		s.runWrite(g, boot)
 	})
+}
+
+// errImageGone: the checked release image is not on disk as it was checked.
+var errImageGone = i18n.NewFormat("The release image is no longer where it was (%s). It was moved, renamed or deleted, or the cached files were cleared. Choose the release again on the Release page, then write the card.")
+
+// imageStillThere: the image file the write reads is there with the size it was
+// checked with (the write itself checks its contents).
+func imageStillThere(im *firmware.Image) error {
+	st, e := os.Stat(im.Path)
+	if e == nil && st.Size() != im.Size {
+		e = fmt.Errorf("%s is %d bytes, was %d", im.Path, st.Size(), im.Size)
+	}
+	if e != nil {
+		return i18n.Detailed(errImageGone.New(im.Path), e)
+	}
+	return nil
 }
 
 // askBeforeWriting asks what only some writes need (boot options that don't go
@@ -108,6 +133,8 @@ type work struct {
 	plan            *flash.Plan
 	guestName       string
 	done            bool
+	// again: where Try again on the error card goes (failedText without retry)
+	again int
 }
 
 // stageText names a stage while it runs, or once done in the past tense.
@@ -142,7 +169,7 @@ func (s *screen) stageText(stage int, guest string, done bool) string {
 }
 
 func (s *screen) newWork(guest string) *work {
-	w := &work{s: s, updating: s.updating, guestName: guest, stage: -1, started: time.Now()}
+	w := &work{s: s, updating: s.updating, guestName: guest, stage: -1, started: time.Now(), again: stepWrite}
 	s.step = stepWrite
 	if guest != "" {
 		w.stages = append(w.stages, stageDownload)
@@ -191,7 +218,8 @@ func (s *screen) newWork(guest string) *work {
 	// Stop: while the game system downloads it cancels the download; the write
 	// sets its own (askStop)
 	w.stop = widget.NewButton(s.t("Stop"), func() {
-		s.confirmDialog(s.t("Stop the download?"), s.t("Nothing was written to the card."), func(ok bool) {
+		title, _, _ := s.closePrompt()
+		s.confirmDialog(title, s.t("Nothing was written to the card."), func(ok bool) {
 			if ok && s.cancel != nil {
 				s.cancel()
 			}
@@ -221,6 +249,9 @@ func (w *work) enter(stage int) {
 	w.stage = stage
 	w.stageAt = time.Now()
 	w.stageFrom = -1
+	if a, ok := stageActivity[stage]; ok {
+		w.s.activity = a
+	}
 	for i, st := range w.stages {
 		w.stageLabels[i].SetText(w.s.stageText(st, w.guestName, st < stage))
 		switch {
@@ -327,6 +358,14 @@ func (w *work) progress(p flash.Progress) {
 		w.count(p.Done, p.Total)
 	case "writing":
 		w.enter(stageWrite)
+		s.activity = actWrite
+		if w.plan != nil {
+			for _, wr := range w.plan.Writes {
+				if wr.Guest && wr.Offset == p.Offset {
+					s.activity = actGuestInstall
+				}
+			}
+		}
 		w.lastOff = p.Offset + p.Length
 		w.blocks.mark(p.Offset, p.Length, blockWritten)
 		w.strip.setPos(w.lastOff)
@@ -351,6 +390,7 @@ func (w *work) progress(p flash.Progress) {
 		sub = s.t(p.Name)
 	case "Bootloader":
 		w.enter(stageWrite)
+		s.activity = actBoot
 		w.phase.SetText(s.stageText(stageWrite, "", false) + ": " + s.t("Bootloader"))
 		w.count(p.Done, p.Total)
 	}
@@ -391,6 +431,7 @@ func (s *screen) runWrite(g *catalog.GuestRelease, boot *firmware.BootloaderChoi
 				fyne.Do(func() {
 					w.count(done, total)
 					if phase == "unpack" {
+						s.activity = actGuestUnpack
 						w.sub.SetText(s.t("Unpacking"))
 						w.sub.Show()
 					}
@@ -432,7 +473,8 @@ func (s *screen) write(w *work, guest *flash.Guest, boot *firmware.BootloaderCho
 	}
 	s.cancel = nil
 	// the write can be stopped: the helper ends it after the block in progress
-	stop := jobs.NewStop(func(ok bool) { fyne.Do(func() { w.stopAnswered(ok) }) })
+	stop := jobs.NewStop(nil)
+	stop.Answer = func(ok bool) { fyne.Do(func() { w.stopAnswered(ok, stop.Unsent()) }) }
 	w.stop.SetText(s.t("Stop"))
 	w.stop.OnTapped = func() { w.askStop(stop) }
 	w.stop.Enable()
@@ -512,18 +554,34 @@ func (w *work) askStop(stop *jobs.Stop) {
 	}, s.win)
 }
 
-// stopAnswered: whether the helper took the stop request. One that doesn't know
-// it (an older helper) goes on writing; it can't be ended from here, since it runs
-// with administrator rights the window doesn't have.
-func (w *work) stopAnswered(ok bool) {
+// stopAnswered: whether the helper took the stop request. When the request could
+// not be put where the helper looks for it (unsent), or the helper did not answer
+// (one from an older flasher), writing goes on; it can't be ended from here, since
+// the helper runs with administrator rights the window doesn't have.
+func (w *work) stopAnswered(ok bool, unsent error) {
 	s := w.s
 	if ok || w.done {
 		return
 	}
-	s.logf("the disk helper did not take the stop request")
 	w.stop.Hide()
 	w.sub.Hide()
-	s.info(s.t("Writing can't be stopped"), s.t("This disk helper is older and can't stop a write, so writing goes on. If you must stop it now, take the card out. It is then incomplete and has to be written again before you use it."), s.win)
+	if unsent != nil {
+		s.logf("the stop request could not be written: %v", unsent)
+	} else {
+		s.logf("the disk helper did not take the stop request")
+	}
+	title, text := s.stopRefused(unsent)
+	s.info(title, text, s.win)
+}
+
+// stopRefused is what the window says when a stop request was not taken: what
+// happened, that writing goes on, and what that means for the card.
+func (s *screen) stopRefused(unsent error) (title, text string) {
+	after := s.t("Wait until it is finished: the card is then written and checked as usual, and you can write it again afterwards. If you take the card out now, it is incomplete and has to be written again before you use it.")
+	if unsent != nil {
+		return s.t("The stop request did not reach the disk helper"), s.t("The flasher could not pass the stop request to the disk helper, so writing goes on.") + " " + after + "\n\n" + s.t("Technical details") + ": " + unsent.Error()
+	}
+	return s.t("Writing can't be stopped"), s.t("The disk helper did not answer the stop request, so writing goes on. This happens with a disk helper from an older version of the flasher.") + " " + after
 }
 
 // stopped is the calm page of a write the user stopped; the block view stays with
@@ -618,24 +676,49 @@ func (w *work) failed(e error, backup string, wrote bool) {
 		happened += s.t("The card could not be written")
 	}
 	todo := s.whatToDo(e)
+	switch {
+	case w.stage == stageDownload && s.errorIs(e, catalog.ErrDamagedDownload, flash.CauseGuestDamaged):
+		todo = s.t("The damaged download was deleted. Choose Try again to download it once more.")
+	case s.errorIs(e, platform.ErrCardChanged):
+		// another card, or the same one put in again: it is chosen once more
+		w.again = stepCard
+	case s.errorIs(e, i18n.CauseFileGone, flash.CauseImageChanged, i18n.CauseDamaged) && w.stage != stageDownload:
+		// the image is chosen once more
+		w.again = stepImage
+	}
 	if backup != "" {
 		todo += "\n\n" + s.t("Recovery backups") + ": " + backup
 	}
 	w.failedText(s.t("The card could not be written"), happened, state, todo, e, nil)
 }
 
+// errorIs: e is a message of one of fs, or the message Find reads from it is.
+func (s *screen) errorIs(e error, fs ...*i18n.Format) bool {
+	key, _, _ := i18n.Find(e)
+	for _, f := range fs {
+		if f.Is(e) || key == f.Key() {
+			return true
+		}
+	}
+	return false
+}
+
+// dropImage forgets the chosen release image (gone or changed on disk), so that
+// it is chosen, or downloaded, once more.
+func (s *screen) dropImage() {
+	if s.im != nil {
+		if dir, e := jobs.CacheDir(); e == nil {
+			firmware.CleanStagedImage(dir, s.im.Path)
+		}
+	}
+	s.im = nil
+	s.guestFor = ""
+}
+
 // whatToDo is the way on after a failed write, for the kinds of failure the
 // write tells apart; the general hints otherwise.
 func (s *screen) whatToDo(e error) string {
-	key, _, _ := i18n.Find(e)
-	is := func(fs ...*i18n.Format) bool {
-		for _, f := range fs {
-			if f.Is(e) || key == f.Key() {
-				return true
-			}
-		}
-		return false
-	}
+	is := func(fs ...*i18n.Format) bool { return s.errorIs(e, fs...) }
 	text := strings.ToLower(e.Error())
 	if _, busy := busyError(e); busy {
 		return s.t("Close what uses the card, then choose Try again.")
@@ -649,8 +732,18 @@ func (s *screen) whatToDo(e error) string {
 		return s.t("Go back to Options and turn the game system off, or use a larger card.")
 	case is(flash.CauseCardTooSmall) || strings.Contains(text, "too small"):
 		return s.t("Use a larger card.")
+	case is(catalog.ErrRateLimitedFor):
+		return s.t("Wait as long as GitHub asks, or connect this computer to a different network, then choose Try again.")
 	case is(catalog.ErrRateLimited):
 		return s.t("Wait about an hour, or connect this computer to a different network, then choose Try again.")
+	case is(catalog.ErrPortal):
+		return s.t("Open a web page in your browser and sign in to the network if it asks you to, then choose Try again.")
+	case is(jobs.ErrCacheFolder):
+		return s.t("Make that folder writable, or free up space on its disk, then choose Try again.")
+	case is(flash.ErrStoppedMidWrite):
+		return s.t("Keep the card in the reader and choose Try again: the card is written again from the start.")
+	case is(platform.ErrCardChanged):
+		return s.t("Put the card in again and choose Try again: it is chosen once more on the Card page, then you can write it.")
 	case is(catalog.ErrNotThere):
 		return s.t("Go back to setup, open the release list again and choose the release there, then write the card.")
 	case is(catalog.ErrStalled, catalog.ErrCutOff, catalog.ErrServer, catalog.ErrRefused, catalog.ErrReleaseList):
@@ -659,14 +752,18 @@ func (s *screen) whatToDo(e error) string {
 		return s.t("Download the release again (Back to setup, then Release), or choose the image file again, then write the card.")
 	case is(i18n.CauseLocked):
 		return s.t("Close what uses the card, then choose Try again.")
-	case is(i18n.CausePermission, i18n.CauseHelperStopped):
+	case is(i18n.CauseElevationRefused, i18n.CausePermission, i18n.CauseHelperStopped):
 		return s.t("Choose Try again and allow administrator access when you are asked. The flasher needs it only to write the card.")
 	case is(i18n.CauseDiskFull, firmware.ErrNoSpace):
 		return s.t("Free up space on this computer, or clear the cached files under Fix or change a card, then choose Try again.")
 	case is(flash.CauseVerify) || flash.Classify(e) == flash.FailureVerify:
 		return s.t("Try another card reader or USB port first. If it happens again, the card does not keep what is written to it; use another card.")
-	case is(i18n.CauseDeviceGone, platform.ErrCardChanged) || flash.Classify(e) == flash.FailureDevice:
+	case is(i18n.CauseDeviceGone) || flash.Classify(e) == flash.FailureDevice:
 		return s.t("Put the card in again and check that it sits firmly, then choose Try again. If it happens again, try another card reader or USB port.")
+	case is(i18n.CauseFileGone):
+		return s.t("Choose Try again, then choose the release image once more on the Release page (download it again, or choose the file), then write the card.")
+	case is(i18n.CauseNameTooLong):
+		return s.t("Move the image to a folder with a short path, then choose Try again and choose the file once more.")
 	case is(i18n.CauseOffline, i18n.CauseTimeout, i18n.CauseTLS):
 		return s.t("Check the internet connection, then choose Try again.")
 	}
@@ -715,7 +812,10 @@ func (w *work) failedText(head, happened, state, todo string, e error, retry fun
 			retry()
 			return
 		}
-		s.backToSetup(stepWrite)
+		if w.again == stepImage {
+			s.dropImage()
+		}
+		s.backToSetup(w.again)
 	})
 	again.Importance = widget.HighImportance
 	back := widget.NewButton(s.t("Back to setup"), func() { s.backToSetup(stepCard) })

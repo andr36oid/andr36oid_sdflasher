@@ -120,7 +120,7 @@ func TestImageErrorKeepsWhatAlreadySays(t *testing.T) {
 	}{
 		{context.Canceled, true},
 		{pathErr, true},
-		{ErrNoSpace.New("1 GB", "0 GB"), true},
+		{ErrNoSpace.New("/tmp/cache", "1 GB", "0 GB"), true},
 		{ErrNoProfileList, true},
 		{errors.New("xz: index is damaged"), false},
 	} {

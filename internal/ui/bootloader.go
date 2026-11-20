@@ -527,6 +527,7 @@ func (s *screen) editBootloader(drive platform.Drive) {
 					return
 				}
 				s.setBusy(true)
+				s.activity = actBoot
 				apply.Disable()
 				choose.Disable()
 				cancel.Disable()

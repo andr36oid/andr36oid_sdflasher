@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 	"github.com/xi2/xz"
 )
@@ -332,6 +333,9 @@ func fetchSmall(ctx context.Context, a Asset) ([]byte, error) {
 	if resp.StatusCode != 200 {
 		return nil, statusError(resp)
 	}
+	if e := webPage(resp); e != nil {
+		return nil, e
+	}
 	b, e := io.ReadAll(io.LimitReader(resp.Body, a.Size+1))
 	if e != nil {
 		return nil, e
@@ -429,11 +433,11 @@ func unpackGuest(ctx context.Context, g *GuestRelease, parts []string, dir strin
 		read, re := z.Read(buf)
 		if read > 0 {
 			if n += int64(read); n > g.Image.Size {
-				return "", fmt.Errorf("the %s download is damaged", g.name())
+				return "", i18n.Detailed(ErrDamagedDownload.New(), fmt.Errorf("the %s download is damaged", g.name()))
 			}
 			h.Write(buf[:read])
 			if _, e = out.Write(buf[:read]); e != nil {
-				return "", e
+				return "", firmware.SpaceError(dir, g.Image.Size-n+int64(read), e)
 			}
 			if progress != nil {
 				progress("unpack", min(packed, g.Download.Size), g.Download.Size)
@@ -446,11 +450,11 @@ func unpackGuest(ctx context.Context, g *GuestRelease, parts []string, dir strin
 			if ctx.Err() != nil {
 				return "", ctx.Err()
 			}
-			return "", fmt.Errorf("the %s download is damaged", g.name())
+			return "", i18n.Detailed(ErrDamagedDownload.New(), fmt.Errorf("the %s download is damaged", g.name()))
 		}
 	}
 	if n != g.Image.Size || hex.EncodeToString(h.Sum(nil)) != g.Image.SHA256 {
-		return "", fmt.Errorf("the %s download is damaged", g.name())
+		return "", i18n.Detailed(ErrDamagedDownload.New(), fmt.Errorf("the %s download is damaged", g.name()))
 	}
 	if e = out.Sync(); e != nil {
 		return "", e

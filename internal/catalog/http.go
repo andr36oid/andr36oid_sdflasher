@@ -33,6 +33,12 @@ var (
 	ErrDamagedDownload = i18n.NewFormat("The downloaded file is damaged: its checksum is not the one the release lists. Try again; if it keeps happening, a proxy or security program may be changing downloads.")
 	// ErrNoDigest: the release lists no checksum for the file, so it can't be checked.
 	ErrNoDigest = i18n.NewFormat("This release does not say what its file's checksum is, so the flasher cannot check the download. Download the image in a web browser and choose it with \"Choose image from disk\".")
+	// ErrRateLimitedFor: ErrRateLimited when GitHub says when it answers again (the
+	// minutes, rounded up).
+	ErrRateLimitedFor = i18n.NewFormat("GitHub is limiting how often this computer may ask it for releases. Try again in about %s minutes, or use a different network.")
+	// ErrPortal: a web page answered instead of GitHub: the sign-in page of a
+	// hotel or public network, or a proxy.
+	ErrPortal = i18n.NewFormat("A web page answered instead of GitHub. This network may need you to sign in first (as in a hotel, a school or on public Wi-Fi): open any web page in your browser, sign in, then try again. A proxy or a security program can also cause this.")
 	// ErrReleaseList: GitHub's answer is not a release list.
 	ErrReleaseList = i18n.NewFormat("The release list from GitHub could not be read. Try again later, or download the image in a web browser and choose it with \"Choose image from disk\".")
 )
@@ -46,6 +52,9 @@ func statusError(resp *http.Response) error {
 	detail := fmt.Errorf("HTTP %s%s", resp.Status, host)
 	switch code := resp.StatusCode; {
 	case code == http.StatusTooManyRequests || code == http.StatusForbidden && (resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != ""):
+		if wait, ok := rateWait(resp.Header); ok {
+			return i18n.Detailed(ErrRateLimitedFor.New(strconv.Itoa(int((wait+time.Minute-1)/time.Minute))), detail)
+		}
 		return i18n.Detailed(ErrRateLimited.New(), detail)
 	case code == http.StatusNotFound || code == http.StatusGone:
 		return i18n.Detailed(ErrNotThere.New(), detail)
@@ -53,6 +62,40 @@ func statusError(resp *http.Response) error {
 		return i18n.Detailed(ErrServer.New(), detail)
 	}
 	return i18n.Detailed(ErrRefused.New(), detail)
+}
+
+// now is the clock of rateWait (the tests set it).
+var now = time.Now
+
+// rateWait is how long GitHub says to wait: Retry-After (seconds) or the time in
+// X-RateLimit-Reset (Unix seconds), at least two minutes; ok false when it says
+// neither or a time more than a day away.
+func rateWait(h http.Header) (time.Duration, bool) {
+	var wait time.Duration
+	if s, e := strconv.ParseInt(strings.TrimSpace(h.Get("Retry-After")), 10, 64); e == nil && s >= 0 {
+		wait = time.Duration(s) * time.Second
+	} else if r, e := strconv.ParseInt(strings.TrimSpace(h.Get("X-RateLimit-Reset")), 10, 64); e == nil && r > 0 {
+		wait = time.Unix(r, 0).Sub(now())
+	} else {
+		return 0, false
+	}
+	if wait > 24*time.Hour {
+		return 0, false
+	}
+	// at least two minutes: the message counts in minutes
+	return max(wait, 2*time.Minute), true
+}
+
+// webPage: the answer is a web page (text/html), not the JSON or file asked for.
+func webPage(resp *http.Response) error {
+	if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/html") {
+		return nil
+	}
+	host := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		host = " from " + resp.Request.URL.Host
+	}
+	return i18n.Detailed(ErrPortal.New(), fmt.Errorf("HTTP %s%s: %s", resp.Status, host, resp.Header.Get("Content-Type")))
 }
 
 // headerTimeout: a server that has not begun to answer by then is given up on. The
@@ -109,8 +152,10 @@ func (w watched) Read(b []byte) (int, error) {
 
 // fetchRange asks for url from offset on (the whole file for 0). resumed is true
 // when the server sends the rest (206); for false the body is the whole file again.
-// stop cancels the request and its watchdog.
-func fetchRange(ctx context.Context, url string, offset int64) (body io.Reader, resumed bool, stop func(), err error) {
+// validator is the file's ETag or Last-Modified from the first answer: on a resume
+// it goes as If-Range, so a server whose file changed since sends the whole new
+// file instead of the rest of another one. stop cancels the request and its watchdog.
+func fetchRange(ctx context.Context, url string, offset int64, validator string) (body io.Reader, resumed bool, valid string, stop func(), err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	stalled := &atomic.Bool{}
 	timer := time.AfterFunc(stallTimeout, func() { stalled.Store(true); cancel() })
@@ -118,11 +163,14 @@ func fetchRange(ctx context.Context, url string, offset int64) (body io.Reader, 
 	req, e := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if e != nil {
 		end()
-		return nil, false, nil, e
+		return nil, false, "", nil, e
 	}
 	req.Header.Set("User-Agent", "andr36oid-sdflasher")
 	if offset > 0 {
 		req.Header.Set("Range", "bytes="+strconv.FormatInt(offset, 10)+"-")
+		if validator != "" {
+			req.Header.Set("If-Range", validator)
+		}
 	}
 	resp, e := client().Do(req)
 	if e != nil {
@@ -130,7 +178,7 @@ func fetchRange(ctx context.Context, url string, offset int64) (body io.Reader, 
 		if stalled.Load() {
 			e = fmt.Errorf("%w: %w", errStallTimer, e)
 		}
-		return nil, false, nil, e
+		return nil, false, "", nil, e
 	}
 	close := func() { end(); resp.Body.Close() }
 	switch {
@@ -139,9 +187,23 @@ func fetchRange(ctx context.Context, url string, offset int64) (body io.Reader, 
 		resumed = true
 	default:
 		close()
-		return nil, false, nil, statusError(resp)
+		return nil, false, "", nil, statusError(resp)
 	}
-	return watched{resp.Body, timer, stalled}, resumed, close, nil
+	if e := webPage(resp); e != nil {
+		close()
+		return nil, false, "", nil, e
+	}
+	valid = validator
+	if !resumed {
+		// a strong ETag, else the date; a weak ETag can't go into If-Range
+		valid = ""
+		if tag := resp.Header.Get("ETag"); tag != "" && !strings.HasPrefix(tag, "W/") {
+			valid = tag
+		} else if date := resp.Header.Get("Last-Modified"); date != "" {
+			valid = date
+		}
+	}
+	return watched{resp.Body, timer, stalled}, resumed, valid, close, nil
 }
 
 // retryable: a download that failed with e is worth resuming: the connection broke

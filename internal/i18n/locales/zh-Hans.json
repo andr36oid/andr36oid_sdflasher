@@ -412,7 +412,6 @@
   "This card is write-protected, so nothing was written. Slide the lock switch on the card or adapter, then try again.": "此卡 is write-protected, so nothing was 已写入. Slide the lock switch on the 卡 or adapter, then try 再次.",
   "The writing stopped before it finished. The card is incomplete and has to be written again before you use it.": "此writing stopped before it finished. 此卡 is incomplete and has to be 已写入 再次 before you use it.",
   "The new release needs room on the card that its game system uses, so this card can't be updated. Write it again with a new installation instead.": "此new 版本 需要 room on the 卡 that its 游戏系统 uses, so this 卡 can't be 更新d. 写入 it 再次 with a new installation instead.",
-  "Not enough free space: %s needed, %s free. Free up space and try again.": "Not enough 可用空间: %s needed, %s free. Free up space and try 再次.",
   "Checking the card size": "正在检查 the 卡 size",
   "write-protected: slide the lock switch on the card or adapter": "write-protected: slide the lock switch on the 卡 or adapter",
   "This device does not support USB host mode (OTG), so no app on it can talk to a card reader. Please use the flasher for Windows, macOS or Linux instead: it is the proven way to write the card. Download it from %s": "此设备 does not support USB host mode (OTG), so no app on it can talk to a 读卡器. Please use the flasher for Windows, macOS or Linux instead: it is the proven way to write the 卡. Download it from %s",

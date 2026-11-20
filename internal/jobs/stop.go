@@ -51,8 +51,11 @@ type Stop struct {
 	once sync.Once
 	ch   chan struct{}
 	// Answer is called once after Request: true when the helper took the request,
-	// false when it did not answer within StopWait (a helper without stop).
+	// false when it did not answer within StopWait (a helper without stop) or the
+	// request could not be put into the job's folder (Unsent says why).
 	Answer func(ok bool)
+	mu     sync.Mutex
+	unsent error
 }
 
 func NewStop(answer func(ok bool)) *Stop {
@@ -61,6 +64,20 @@ func NewStop(answer func(ok bool)) *Stop {
 
 // Request asks the running write to stop; asking twice is asking once.
 func (s *Stop) Request() { s.once.Do(func() { close(s.ch) }) }
+
+// Unsent is why the request could not be put into the job's folder, nil when it
+// was (the helper then only did not answer). It is set before Answer(false).
+func (s *Stop) Unsent() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.unsent
+}
+
+func (s *Stop) setUnsent(e error) {
+	s.mu.Lock()
+	s.unsent = e
+	s.mu.Unlock()
+}
 
 // watchStop is the helper's side: it cancels the work when the request appears in
 // dir and calls took once, first thing. It ends with ctx.
@@ -106,3 +123,6 @@ func stopOutcome(e error, dev flash.Device, closeCard func()) (state string, ok 
 	}
 	return StoppedIncomplete, true
 }
+
+// writeStop puts the request into the job's folder (the tests make it fail).
+var writeStop = func(path string) error { return os.WriteFile(path, nil, 0644) }

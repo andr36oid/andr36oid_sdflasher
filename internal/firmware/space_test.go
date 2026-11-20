@@ -25,7 +25,7 @@ func TestStageChecksFreeSpace(t *testing.T) {
 	t.Cleanup(func() { freeBytes = old })
 	freeBytes = func(string) (int64, error) { return 100 << 20, nil }
 	_, e := Stage(context.Background(), src, filepath.Join(dir, "cache"), nil)
-	if !ErrNoSpace.Is(e) || !strings.Contains(e.Error(), "0.5 GB needed, 0.1 GB free") {
+	if !ErrNoSpace.Is(e) || !strings.Contains(e.Error(), "cache: 0.5 GB needed, 0.1 GB free") {
 		t.Fatal(e)
 	}
 	freeBytes = func(string) (int64, error) { return 8 << 30, nil }

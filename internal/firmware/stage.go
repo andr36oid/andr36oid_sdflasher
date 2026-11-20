@@ -119,7 +119,7 @@ func stage(ctx context.Context, src, dir string, progress func(int64, int64), di
 				return "", errTooLarge()
 			}
 			if _, e = out.Write(buf[:n]); e != nil {
-				return "", e
+				return "", SpaceError(dir, int64(entry.UncompressedSize64)-written+int64(n), e)
 			}
 			if progress != nil {
 				progress(written, int64(entry.UncompressedSize64))
@@ -166,7 +166,8 @@ func stageGzip(ctx context.Context, src, dir string, progress func(int64, int64)
 	if e != nil {
 		return "", e
 	}
-	if e = CheckSpace(dir, gzipSize(f, st.Size())); e != nil {
+	need := gzipSize(f, st.Size())
+	if e = CheckSpace(dir, need); e != nil {
 		return "", e
 	}
 	in := &counted{r: f}
@@ -205,7 +206,7 @@ func stageGzip(ctx context.Context, src, dir string, progress func(int64, int64)
 				return "", errTooLarge()
 			}
 			if _, e = out.Write(buf[:n]); e != nil {
-				return "", e
+				return "", SpaceError(dir, need-written+int64(n), e)
 			}
 			if progress != nil {
 				progress(min(in.n, st.Size()), st.Size())

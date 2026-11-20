@@ -110,14 +110,47 @@ func cardGuest(record []byte) *CardGuest {
 
 func Snapshot(r io.ReaderAt, size int64) (string, error) {
 	h := sha256.New()
+	var first []byte
 	for _, off := range []int64{0, size - 34*512} {
 		b := make([]byte, 34*512)
+		if _, e := r.ReadAt(b, off); e != nil {
+			return "", e
+		}
+		if first == nil {
+			first = b
+		}
+		h.Write(b)
+	}
+	// Two factory-formatted cards of one make and size can have the same start and
+	// end; the first sector of their first MBR partition holds the volume's serial
+	// number, which differs from card to card.
+	if off, ok := mbrFirstPartition(first, size); ok {
+		b := make([]byte, 512)
 		if _, e := r.ReadAt(b, off); e != nil {
 			return "", e
 		}
 		h.Write(b)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// mbrFirstPartition is the offset of the first partition of an MBR (not the
+// protective MBR of a GPT disk) in the card's first sector, ok false for none.
+func mbrFirstPartition(sector []byte, size int64) (int64, bool) {
+	if len(sector) < 512 || sector[510] != 0x55 || sector[511] != 0xaa {
+		return 0, false
+	}
+	entry := sector[446:462]
+	kind := entry[4]
+	if kind == 0 || kind == 0xee {
+		return 0, false
+	}
+	start := int64(entry[8]) | int64(entry[9])<<8 | int64(entry[10])<<16 | int64(entry[11])<<24
+	off := start * 512
+	if start == 0 || off+512 > size {
+		return 0, false
+	}
+	return off, true
 }
 
 // DataCardFile on BOOT marks the data card of an eMMC install (the eMMC installer writes

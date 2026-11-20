@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -36,6 +37,8 @@ type screen struct {
 	cancel  context.CancelFunc
 	// closeAfter: the window closes when the stopped download has ended
 	closeAfter bool
+	// activity: what runs while busy (closeprompt.go), for the close prompt
+	activity int
 
 	// the frame: side bar on the left, one page at a time on the right
 	body      *fyne.Container
@@ -79,7 +82,8 @@ type screen struct {
 	listing    bool
 	listed     bool
 	inspecting bool
-	allDrives  bool // advanced: fixed disks are listed too
+	allDrives  bool   // advanced: fixed disks are listed too
+	lostDrive  string // the chosen card that is no longer listed, until another is chosen
 	allCheck   *widget.Check
 	cardRows   *fyne.Container
 	cardLabel  *widget.Label
@@ -123,6 +127,8 @@ type screen struct {
 	guestInfo         *widget.Label
 	guestBox          *fyne.Container
 	guestLookupCancel context.CancelFunc // stops the running lookups
+	guestLookupCtx    context.Context    // the running lookups' context
+	guestRetry        *widget.Button     // looks again for a system whose lookup failed
 	fixCount          int                // bug fixes published for the release, -1 while unknown
 	fixesFor          string
 	applyFixes        bool
@@ -187,31 +193,13 @@ func Run() {
 	s.localizeDialogs()
 	w.Resize(fyne.NewSize(980, 680))
 	w.CenterOnScreen()
-	w.SetCloseIntercept(func() {
-		if s.busy && s.cancel != nil {
-			// a download (nothing is written yet) may be stopped to close
-			s.confirmDialog(s.t("Stop the download?"), s.t("The download stops and the window closes. Nothing was written to the card."), func(ok bool) {
-				if ok && s.cancel != nil {
-					s.closeAfter = true
-					s.cancel()
-				}
-			}, w)
-			return
+	// closing names what runs and stops what can be stopped (closeprompt.go)
+	w.SetCloseIntercept(s.closeRequested)
+	go func() {
+		for range time.Tick(5 * time.Minute) {
+			fyne.Do(s.keepStaged)
 		}
-		if s.busy && s.writing {
-			s.info(s.t("The card is being written"), s.t(closeWhileWriting), w)
-			return
-		}
-		if s.busy {
-			s.info(s.t("Operation in progress"), s.t("Wait for the operation to finish before closing. Keep the card connected."), w)
-			return
-		}
-		if s.updateCancel != nil {
-			s.updateCancel()
-		}
-		s.stopGuestLookup()
-		w.Close()
-	})
+	}()
 	if e := jobs.HelperAvailable(); e != nil {
 		s.showHelperMissing()
 		w.ShowAndRun()
@@ -338,6 +326,9 @@ func (s *screen) writable() bool {
 
 func (s *screen) setBusy(v bool) {
 	s.busy = v
+	if !v {
+		s.activity = actNone
+	}
 	for _, b := range []*widget.Button{s.refresh, s.language} {
 		if b == nil {
 			continue
@@ -451,6 +442,7 @@ func (s *screen) loadImage(p string, origin ...string) {
 	}
 	s.logf("checking image %s", p)
 	s.setBusy(true)
+	s.activity = imageActivity(p)
 	// The previous selection's staged image is now superseded; remove it so a
 	// session that tries several releases doesn't pile up decompressed copies.
 	if s.im != nil {
@@ -465,6 +457,9 @@ func (s *screen) loadImage(p string, origin ...string) {
 	s.convert = false
 	s.customLabel.SetText(s.dtbText())
 	s.releaseLabel.SetText(s.t("Checking the release image..."))
+	if s.activity == actUnpackImage {
+		s.releaseLabel.SetText(s.t("Unpacking and checking the release image..."))
+	}
 	s.progress.SetValue(0)
 	s.progress.Show()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -731,6 +726,7 @@ func (s *screen) download(a catalog.Asset) {
 	}
 	s.logf("downloading %s", a.URL)
 	s.setBusy(true)
+	s.activity = actDownload
 	s.progress.Show()
 	s.progress.SetValue(0)
 	s.releaseLabel.SetText(s.t("downloading") + ": " + a.Name)
@@ -761,12 +757,48 @@ func (s *screen) download(a catalog.Asset) {
 			if e != nil {
 				s.logf("download failed: %v", e)
 				s.releaseLabel.SetText("")
-				s.showError(e)
+				s.downloadFailed(a, e)
 				return
 			}
 			s.loadImage(p, a.URL)
 		})
 	}()
+}
+
+// downloadFailed says why a release download did not finish, that nothing was
+// written, and offers to download it again (a damaged download was deleted).
+func (s *screen) downloadFailed(a catalog.Asset, e error) {
+	text := s.explain(e)
+	if catalog.ErrDamagedDownload.Is(e) {
+		text += " " + s.t("The damaged file was deleted.")
+	}
+	if _, _, ok := i18n.FindState(e); !ok {
+		text += "\n\n" + s.t(flash.StateUntouched.Key())
+	}
+	text += "\n\n" + s.t("Technical details") + ":\n" + e.Error()
+	if !downloadRetryable(e) {
+		s.info(s.t("The download did not finish"), text, s.win)
+		return
+	}
+	s.ask(s.t("The download did not finish"), text, s.t("Download again"), func(ok bool) {
+		if ok {
+			s.download(a)
+		}
+	})
+}
+
+// downloadRetryable: downloading the same file again can work (not for a file
+// that is gone, one without a checksum, or a full or unwritable disk).
+func downloadRetryable(e error) bool {
+	for _, f := range []*i18n.Format{catalog.ErrNotThere, catalog.ErrNoDigest, firmware.ErrNoSpace, jobs.ErrCacheFolder, i18n.CauseDiskFull} {
+		if f.Is(e) {
+			return false
+		}
+	}
+	if key, _, ok := i18n.Find(e); ok && key == i18n.CauseDiskFull.Key() {
+		return false
+	}
+	return true
 }
 
 // restoreBackup brings back the system an interrupted update saved, on drive.

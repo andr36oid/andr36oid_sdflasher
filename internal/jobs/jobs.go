@@ -79,13 +79,28 @@ type Result struct {
 	Stopped string `json:"stopped,omitempty"`
 }
 
+// ErrCacheFolder: the folder for downloads, unpacked images and the helper's jobs
+// can't be made or written to.
+var ErrCacheFolder = i18n.NewFormat("The flasher can't save its files in the folder %s. Check that this folder and the disk it is on can be written to (not read-only, not full), then try again.")
+
 func CacheDir() (string, error) {
 	d, e := cacheBase()
 	if e != nil {
-		return "", e
+		return "", i18n.Detailed(ErrCacheFolder.New("andr36oid-sdflasher"), e)
 	}
 	p := filepath.Join(d, "andr36oid-sdflasher")
-	return p, os.MkdirAll(p, 0700)
+	if e = os.MkdirAll(p, 0700); e == nil {
+		// a folder that is there but read-only fails only at the first file
+		var f *os.File
+		if f, e = os.CreateTemp(p, ".write-check-*"); e == nil {
+			f.Close()
+			os.Remove(f.Name())
+		}
+	}
+	if e != nil {
+		return p, i18n.Detailed(ErrCacheFolder.New(p), e)
+	}
+	return p, nil
 }
 func Worker(job string) error {
 	st, e := os.Lstat(job)
@@ -124,6 +139,9 @@ func Worker(job string) error {
 	}
 	var result Result
 	defer func() { result.Done = true; emit(result) }()
+	// executing: the write has handed over to flash.Execute, which says itself
+	// what the card is like when it fails
+	executing := false
 	work := func() error {
 		d, e := platform.Revalidate(req.Drive)
 		if e != nil {
@@ -472,6 +490,7 @@ func Worker(job string) error {
 		if req.Mode == "update" {
 			result.Backup = backup
 		}
+		executing = true
 		if e = flash.Execute(ctx, dev, im, p, boot, backup, func(p flash.Progress) { emit(Result{Progress: &p, Backup: result.Backup}) }); e != nil {
 			if stopping.Load() {
 				if state, ok := stopOutcome(e, dev, closeCard); ok {
@@ -503,6 +522,12 @@ func Worker(job string) error {
 		// stopped before the card was opened
 		if state, ok := stopOutcome(e, nil, nil); ok {
 			result.Stopped, e = state, nil
+		}
+	}
+	if e != nil && req.Action == "write" && !executing {
+		// everything before flash.Execute only reads the card
+		if _, _, ok := i18n.FindState(e); !ok {
+			e = fmt.Errorf("%w; %w", e, flash.StateUntouched.New())
 		}
 	}
 	if e != nil {
@@ -618,8 +643,9 @@ func RunStoppable(req Request, onProgress func(flash.Progress), stop *Stop) (Res
 	timer := time.NewTicker(150 * time.Millisecond)
 	defer timer.Stop()
 	var latest Result
-	// began: the helper had begun to change the card
-	began := false
+	// began: the helper had begun to change the card; seen: it had said anything
+	// at all (before its first status it has not opened the card)
+	began, seen := false, false
 	// the stop request: asked, and whether the helper's answer was passed on
 	var stopAsked <-chan struct{}
 	var stopWait <-chan time.Time
@@ -641,7 +667,7 @@ func RunStoppable(req Request, onProgress func(flash.Progress), stop *Stop) (Res
 		if e == nil {
 			var r Result
 			if json.Unmarshal(b, &r) == nil {
-				latest = r
+				latest, seen = r, true
 				if r.Stopping && stop != nil && stopAsked == nil {
 					answer(true)
 				}
@@ -657,6 +683,11 @@ func RunStoppable(req Request, onProgress func(flash.Progress), stop *Stop) (Res
 	// stopped is the error of a helper that ended (crashed, was killed) halfway: the
 	// card is incomplete when it had begun to write
 	stopped := func(e error) error {
+		if !seen && (req.Action == "write" || !writes[req.Action] || errors.Is(e, platform.ErrElevationRefused)) {
+			// the helper never ran, or ended before its first word; a write says
+			// that before it opens the card
+			return fmt.Errorf("%w; %w", e, flash.StateUntouched.New())
+		}
 		if !began {
 			return e
 		}
@@ -668,7 +699,8 @@ func RunStoppable(req Request, onProgress func(flash.Progress), stop *Stop) (Res
 			poll()
 		case <-stopAsked:
 			stopAsked = nil
-			if e := os.WriteFile(filepath.Join(dir, stopFile), nil, 0644); e != nil {
+			if e := writeStop(filepath.Join(dir, stopFile)); e != nil {
+				stop.setUnsent(e)
 				answer(false)
 			} else {
 				stopWait = time.After(StopWait)
@@ -687,6 +719,9 @@ func RunStoppable(req Request, onProgress func(flash.Progress), stop *Stop) (Res
 			if latest.Done && latest.Error != "" {
 				// the helper said what went wrong before it ended
 				return latest, flash.NewFailure(latest.ErrorKind, errors.New(latest.Error))
+			}
+			if errors.Is(e, platform.ErrElevationRefused) {
+				return latest, stopped(i18n.Detailed(i18n.CauseElevationRefused.New(), e))
 			}
 			if e != nil {
 				return latest, stopped(i18n.Detailed(i18n.CauseHelperStopped.New(), fmt.Errorf("administrator access was denied or the helper stopped: %w", e)))

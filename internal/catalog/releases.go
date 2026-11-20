@@ -49,6 +49,9 @@ func releaseList(req *http.Request) ([]release, error) {
 	if resp.StatusCode != 200 {
 		return nil, statusError(resp)
 	}
+	if e := webPage(resp); e != nil {
+		return nil, e
+	}
 	var rel []release
 	if e = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&rel); e != nil {
 		if ctx.Err() != nil {
@@ -180,11 +183,12 @@ func downloadRelease(ctx context.Context, a Asset, repository, dir string, progr
 	// a broken or stalled connection is resumed where it stopped (or started again
 	// when the server can't resume), up to downloadTries times
 	var last error
+	validator := ""
 	for try := 0; try < downloadTries && n < a.Size; try++ {
 		if try > 0 && !pause(ctx) {
 			break
 		}
-		body, resumed, stop, e := fetchRange(ctx, a.URL, n)
+		body, resumed, valid, stop, e := fetchRange(ctx, a.URL, n, validator)
 		if e != nil {
 			if !retryable(ctx, e) {
 				return "", e
@@ -204,6 +208,7 @@ func downloadRelease(ctx context.Context, a Asset, repository, dir string, progr
 			h.Reset()
 			n = 0
 		}
+		validator = valid
 		written, e := receive(body, f, h, n, a.Size, progress)
 		stop()
 		n = written
@@ -213,7 +218,10 @@ func downloadRelease(ctx context.Context, a Asset, repository, dir string, progr
 		if errors.Is(e, errTooLong) {
 			return "", i18n.Detailed(ErrDamagedDownload.New(), e)
 		}
-		if errors.Is(e, errWriteFile) || !retryable(ctx, e) {
+		if errors.Is(e, errWriteFile) {
+			return "", firmware.SpaceError(dir, a.Size-written, e)
+		}
+		if !retryable(ctx, e) {
 			return "", e
 		}
 		last = e
@@ -236,6 +244,7 @@ func downloadRelease(ctx context.Context, a Asset, repository, dir string, progr
 		return "", i18n.Detailed(ErrCutOff.New(), last)
 	}
 	if hex.EncodeToString(h.Sum(nil)) != digest {
+		// the damaged file goes (the deferred Remove)
 		return "", i18n.Detailed(ErrDamagedDownload.New(), errors.New("download checksum mismatch: "+a.Name))
 	}
 	if e = f.Sync(); e != nil {

@@ -412,7 +412,6 @@
   "This card is write-protected, so nothing was written. Slide the lock switch on the card or adapter, then try again.": "यह कार्ड is write-protected, so nothing was लिखा गया. Slide the lock switch on the कार्ड or adapter, then try फिर.",
   "The writing stopped before it finished. The card is incomplete and has to be written again before you use it.": "यह writing stopped before it finished. यह कार्ड is incomplete and has to be लिखा गया फिर before you use it.",
   "The new release needs room on the card that its game system uses, so this card can't be updated. Write it again with a new installation instead.": "यह new रिलीज़ की आवश्यकता है room on the कार्ड that its गेम सिस्टम uses, so this कार्ड can't be अपडेटd. लिखें it फिर with a new installation instead.",
-  "Not enough free space: %s needed, %s free. Free up space and try again.": "Not enough खाली स्थान: %s needed, %s free. Free up space and try फिर.",
   "Checking the card size": "जाँच the कार्ड size",
   "write-protected: slide the lock switch on the card or adapter": "write-protected: slide the lock switch on the कार्ड or adapter",
   "This device does not support USB host mode (OTG), so no app on it can talk to a card reader. Please use the flasher for Windows, macOS or Linux instead: it is the proven way to write the card. Download it from %s": "यह डिवाइस does not support USB host mode (OTG), so no app on it can talk to a कार्ड रीडर. Please use the flasher for Windows, macOS or Linux instead: it is the proven way to write the कार्ड. Download it from %s",

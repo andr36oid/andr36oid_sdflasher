@@ -132,7 +132,9 @@ var (
 		})
 	// CauseCardTooSmall: the card can't hold andr36oid at all.
 	CauseCardTooSmall = i18n.NewCause("This card is too small for andr36oid. It needs a card of at least 16 GB. Use a larger card.",
-		func(s string) bool { return strings.Contains(s, "card is too small") })
+		func(s string) bool {
+			return strings.Contains(s, "card is too small") || strings.Contains(s, "card is smaller than the release image")
+		})
 )
 
 // What a failed write left the card like: the apps show it after the error's own

@@ -68,6 +68,8 @@ func (s *screen) buildGuest() {
 		s.ready()
 	})
 	s.guestInfo = wrapped("")
+	s.guestRetry = widget.NewButton(s.t("Try again"), s.retryGuest)
+	s.guestRetry.Hide()
 	s.guestChange = quiet(s.t("Change..."), func() {
 		if s.guestRadio.Visible() {
 			s.guestRadio.Hide()
@@ -75,7 +77,7 @@ func (s *screen) buildGuest() {
 			s.guestRadio.Show()
 		}
 	})
-	s.guestBox = noteCard(notePlain, s.guestCheckRow, s.guestInfo, container.NewHBox(s.guestChange), s.guestRadio)
+	s.guestBox = noteCard(notePlain, s.guestCheckRow, s.guestInfo, container.NewHBox(s.guestChange, s.guestRetry), s.guestRadio)
 	s.guestBox.Hide()
 }
 
@@ -91,25 +93,51 @@ func (s *screen) lookupGuest() {
 	// the lookups for an earlier release, or of a window that closes, stop
 	s.stopGuestLookup()
 	ctx, cancel := context.WithCancel(context.Background())
-	s.guestLookupCancel = cancel
-	want := s.im.SHA256
+	s.guestLookupCtx, s.guestLookupCancel = ctx, cancel
 	for _, src := range catalog.GuestSources {
-		src := src
-		s.guests[src.ID] = &guestLookup{}
-		go func() {
-			g, e := catalog.LatestGuest(ctx, src)
-			if e != nil {
-				g = nil
-			}
-			fyne.Do(func() {
-				if s.im == nil || s.im.SHA256 != want || s.guestFor != want {
-					return
-				}
-				s.guests[src.ID] = &guestLookup{done: true, g: g, err: e}
-				s.ready()
-			})
-		}()
+		s.lookupOneGuest(src)
 	}
+}
+
+// latestGuest is catalog.LatestGuest (the tests replace it).
+var latestGuest = catalog.LatestGuest
+
+// lookupOneGuest asks for the latest release of src for the loaded release image.
+func (s *screen) lookupOneGuest(src catalog.GuestSource) {
+	ctx, want := s.guestLookupCtx, s.im.SHA256
+	if ctx == nil || ctx.Err() != nil {
+		ctx, s.guestLookupCancel = context.WithCancel(context.Background())
+		s.guestLookupCtx = ctx
+	}
+	s.guests[src.ID] = &guestLookup{}
+	background(func() {
+		g, e := latestGuest(ctx, src)
+		if e != nil {
+			g = nil
+		}
+		fyne.Do(func() {
+			if s.im == nil || s.im.SHA256 != want || s.guestFor != want {
+				return
+			}
+			s.guests[src.ID] = &guestLookup{done: true, g: g, err: e}
+			s.ready()
+		})
+	})
+}
+
+// retryGuest looks once more for the systems whose lookup failed (no connection,
+// a GitHub limit, a damaged release list).
+func (s *screen) retryGuest() {
+	if s.im == nil || s.guests == nil {
+		return
+	}
+	for _, src := range catalog.GuestSources {
+		if st, _ := s.guestState(src.ID); st == guestMissing {
+			s.logf("looking for %s again", src.Display)
+			s.lookupOneGuest(src)
+		}
+	}
+	s.ready()
 }
 
 // stopGuestLookup ends the game system lookups that are still running.
@@ -118,6 +146,7 @@ func (s *screen) stopGuestLookup() {
 		s.guestLookupCancel()
 		s.guestLookupCancel = nil
 	}
+	s.guestLookupCtx = nil
 }
 
 // guest states, for the label and the text under the choice
@@ -237,6 +266,7 @@ func (s *screen) refreshGuest() {
 		s.guestBox.Show()
 		return
 	}
+	s.guestRetry.Hide()
 	s.guestCheckRow.Show()
 	s.guestChange.Show()
 	if !s.guestShown() {
@@ -304,6 +334,8 @@ func (s *screen) refreshGuest() {
 					text += " " + s.t(key, args...)
 				}
 			}
+			text += " " + s.t("The rest of the flasher works without it: you can write the card with no game system and add one later on the console.")
+			s.guestRetry.Show()
 		case guestNone:
 			text = s.t("This system has no release yet. Choose another one, or none.")
 		case guestFlasher:

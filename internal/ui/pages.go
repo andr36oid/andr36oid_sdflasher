@@ -162,8 +162,19 @@ func builtInSlot(d platform.Drive) bool {
 	return strings.HasPrefix(filepath.Base(d.Path), "mmcblk") || strings.Contains(strings.ToLower(d.Name), "built in sd")
 }
 
-// driveTitle is a drive in words: what it is and its size.
+// driveTitle is a drive in words: what it is and its size, and its device path
+// when another listed drive has the same name and size.
 func (s *screen) driveTitle(d platform.Drive) string {
+	title := s.plainDriveTitle(d)
+	for _, o := range s.drives {
+		if o.Path != d.Path && s.plainDriveTitle(o) == title {
+			return title + " (" + d.Path + ")"
+		}
+	}
+	return title
+}
+
+func (s *screen) plainDriveTitle(d platform.Drive) string {
 	name := shown(d.Name)
 	if builtInSlot(d) {
 		name = s.t("SD card in the built-in slot")
@@ -216,7 +227,30 @@ func (s *screen) cardText() string {
 		}
 		return s.t("Holds andr36oid for %s", name)
 	}
-	return s.t("New installation required") + ": " + c.Reason
+	return s.t("New installation required") + ": " + s.cardReason(c.Reason)
+}
+
+// cardReason says in plain words why a card holds no andr36oid that can be
+// updated (flash.InspectCard's Reason).
+func (s *screen) cardReason(reason string) string {
+	switch {
+	case reason == "BOOT filesystem was not recognized":
+		return s.t("Its BOOT partition could not be read.")
+	case reason == "This is not a recognized andr36oid installation":
+		return s.t("It does not hold andr36oid.")
+	case reason == "The existing Android device tree was not found":
+		return s.t("Its BOOT partition has no Android device tree.")
+	case reason == "Unrecognized legacy MBR layout":
+		return s.t("Its partitions are not laid out the way andr36oid lays them out.")
+	case strings.HasPrefix(reason, "This card has not finished its first boot"):
+		return s.t("It was written, but it has not finished its first start in a console yet, so it has no data partition.")
+	case reason == "The userdata filesystem was not recognized":
+		return s.t("Its data partition (userdata) is not formatted. The card has not finished its first start in a console yet, or its data partition was damaged.")
+	case reason != "":
+		// layout.Read: no partition table, or one that is not andr36oid's
+		return s.t("It has no andr36oid partition table. It may be new, or hold another system or other files.") + " (" + reason + ")"
+	}
+	return s.t("It does not hold andr36oid.")
 }
 
 func (s *screen) refreshCards() {
@@ -266,6 +300,8 @@ func (s *screen) refreshCards() {
 	switch {
 	case s.listing:
 		s.cardLabel.SetText(s.t("Looking for cards..."))
+	case s.lostDrive != "" && s.drive == nil:
+		s.cardLabel.SetText(s.t("The card you chose (%s) is no longer there, or another card is in its place. Nothing was written to it. Put it in again and choose it, or choose another card.", s.lostDrive))
 	case s.listed && len(s.drives) == 0:
 		s.cardLabel.SetText(s.t("No removable cards found. Insert a card and refresh."))
 	case s.listed && s.drive == nil:
@@ -293,7 +329,7 @@ func (s *screen) refreshCardNote() {
 	}
 	switch {
 	case s.updating && !s.card.Installed:
-		s.cardNote.Add(noteCard(noteWarning, wrapped(s.t("This card has no andr36oid to update.")+" "+s.t("Choose another card, or set this one up as a new card. That erases it.")),
+		s.cardNote.Add(noteCard(noteWarning, wrapped(s.t("This card has no andr36oid to update.")+" "+s.cardReason(s.card.Reason)+" "+s.t("Choose another card, or set this one up as a new card. That erases it.")),
 			container.NewHBox(widget.NewButton(s.t("Set it up as a new card"), func() { s.setTask(taskNew) }))))
 	case s.tooSmall():
 		s.cardNote.Add(noteCard(noteError, wrapped(s.tooSmallText())))
@@ -400,6 +436,8 @@ func (s *screen) setDrives(ds []platform.Drive) {
 			}
 		}
 		if !still {
+			s.logf("the chosen card %s is gone", s.drive.Path)
+			s.lostDrive = s.driveTitle(*s.drive)
 			s.drive, s.card = nil, nil
 		}
 	}
@@ -415,12 +453,14 @@ func (s *screen) pickDrive(d platform.Drive) {
 }
 
 func (s *screen) inspectDrive(d platform.Drive) {
+	s.lostDrive = ""
 	s.drive = &d
 	s.card = nil
 	s.eraseOK = false
 	s.inspecting = true
 	s.logf("inspecting %s", d.Path)
 	s.setBusy(true)
+	s.activity = actReadCard
 	go func() {
 		result, e := jobs.Run(jobs.Request{Action: "inspect", Drive: d}, nil)
 		fyne.Do(func() {
@@ -430,7 +470,17 @@ func (s *screen) inspectDrive(d platform.Drive) {
 				s.drive = nil
 				s.setBusy(false)
 				// inspecting only reads the card
-				s.showError(fmt.Errorf("%w; %w", e, flash.StateUntouched.New()))
+				e = fmt.Errorf("%w; %w", e, flash.StateUntouched.New())
+				if s.errorIs(e, i18n.CauseElevationRefused, i18n.CauseHelperStopped) {
+					// the administrator prompt was cancelled: offered once more
+					s.ask(s.t("The card could not be read"), s.explain(e)+"\n\n"+s.t("Technical details")+":\n"+e.Error(), s.t("Try again"), func(ok bool) {
+						if ok {
+							s.pickDrive(d)
+						}
+					})
+					return
+				}
+				s.showError(e)
 				return
 			}
 			s.card = result.Card
@@ -501,10 +551,15 @@ func (s *screen) refreshConsoles() {
 	}
 	s.consoleLead.SetText(s.t("Choose your console’s board and screen."))
 	if s.card != nil && s.card.Profile != "" && s.im != nil {
+		carried := false
 		for _, p := range s.im.Profiles {
 			if p.ID == s.card.Profile {
+				carried = true
 				s.consoleLead.SetText(s.t("The card was set up for %s. Change it if this card is for another console.", shown(p.Name)))
 			}
+		}
+		if !carried {
+			s.consoleLead.SetText(s.t("The card was set up for %s, which the chosen release does not carry. Choose your console below, or go back and choose another release.", shown(s.card.Profile)))
 		}
 	}
 	s.consoleList.RemoveAll()

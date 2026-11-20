@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
+	"github.com/andr36oid/andr36oid-sdflasher/internal/i18n"
 	"io"
 	"os"
 	"path/filepath"
@@ -153,13 +154,24 @@ func verify(ctx context.Context, dst, src io.ReaderAt, doff, soff, n int64, cb f
 var forgetCached = dropCached
 
 func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootPath, backupDir string, notify func(Progress)) error {
+	g := &guardedDevice{Device: deviceErrors{dst}, plan: p}
+	e := execute(ctx, dst, g, im, p, bootPath, backupDir, notify)
+	if e != nil && !g.wrote.Load() {
+		// a failure before the first write says so (most checks have no state)
+		if _, _, ok := i18n.FindState(e); !ok {
+			e = fmt.Errorf("%w; %w", e, StateUntouched.New())
+		}
+	}
+	return e
+}
+
+func execute(ctx context.Context, raw Device, dst *guardedDevice, im *firmware.Image, p *Plan, bootPath, backupDir string, notify func(Progress)) error {
 	if e := p.Validate(); e != nil {
 		return e
 	}
-	if e := checkCompressedUserdata(dst, p, im.Facts["f2fs_compression"]); e != nil {
+	if e := checkCompressedUserdata(raw, p, im.Facts["f2fs_compression"]); e != nil {
 		return e
 	}
-	dst = &guardedDevice{Device: deviceErrors{dst}, plan: p}
 	src, e := os.Open(im.Path)
 	if e != nil {
 		return e
@@ -296,7 +308,7 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 	// A counterfeit card stops here, before the release is written (capacity.go).
 	if p.Mode == "install" && len(p.Probes) > 0 {
 		if e = checkCapacity(ctx, dst, p, notify); e != nil {
-			if wp := WriteProtectedError(e); wp != nil && !dst.(*guardedDevice).wrote.Load() {
+			if wp := WriteProtectedError(e); wp != nil && !dst.wrote.Load() {
 				return wp
 			}
 			if Classify(e) == FailureCapacity {
@@ -337,7 +349,7 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 	var done int64
 	fail := func(cause error) error {
 		// a card that refuses the very first write still has all it had
-		if wp := WriteProtectedError(cause); wp != nil && !dst.(*guardedDevice).wrote.Load() {
+		if wp := WriteProtectedError(cause); wp != nil && !dst.wrote.Load() {
 			return wp
 		}
 		if backup != nil {
