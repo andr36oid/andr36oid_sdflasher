@@ -270,6 +270,13 @@ func Worker(job string) error {
 			if data == nil {
 				return nil
 			}
+			// Already this version: say so instead of writing the same bytes again.
+			if same, err := firmware.BootOptionsOnCard(h.File, d.Size, data, out); err != nil {
+				return err
+			} else if same {
+				out.Unchanged = true
+				return nil
+			}
 			h.Remount = true
 			emit(Result{Progress: &flash.Progress{Phase: "Bootloader", Done: 0, Total: firmware.BootloaderSize}})
 			return firmware.ApplyResolvedBootOptions(h.File, d.Size, data, out, build, dir)

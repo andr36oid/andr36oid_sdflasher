@@ -394,7 +394,7 @@ func ApplyResolvedBootOptions(d HotfixDisk, size int64, data []byte, out *Bootlo
 	}
 	slots, e := bootSlots(st.tab)
 	if e != nil {
-		return e
+		return bootRefused(e)
 	}
 	for i, s := range out.plan.Slots {
 		target := slots[s.Name]
@@ -444,12 +444,11 @@ func ApplyResolvedBootOptions(d HotfixDisk, size int64, data []byte, out *Bootlo
 			b := make([]byte, target.Size)
 			copy(b, out.plan.Data[i])
 			if name == "uboot" && CheckBootloaderContainer(b) == nil {
-				e = WriteBootloaderSlot(d, b, nil)
-			} else {
-				e = writeBootSlot(d, target, b)
-			}
-			if e != nil {
-				return e
+				if e = WriteBootloaderSlot(d, b, nil); e != nil {
+					return bootUbootStopped(e)
+				}
+			} else if e = writeBootSlot(d, target, b); e != nil {
+				return bootStageStopped(e)
 			}
 		}
 	}

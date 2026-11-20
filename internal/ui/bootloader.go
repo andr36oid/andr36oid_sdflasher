@@ -284,6 +284,7 @@ func (p *bootloaderPicker) refresh() {
 	}
 
 }
+
 // A selected mainline image already supplies its exact matched loader pair.
 // Download offers remain necessary for choices that do not come from it.
 func (p *bootloaderPicker) hasImagePair(c firmware.BootloaderChoice) bool {
@@ -444,6 +445,9 @@ func (s *screen) editBootloader(drive platform.Drive) {
 				}
 			})
 			picker.cardTarget = true
+			// This page is only about boot options: show the choices right away.
+			picker.rows.Show()
+			picker.toggle.SetIcon(theme.MenuDropDownIcon())
 			picker.target = firmware.BootTarget{Storage: "sd", ImageAvailable: image != nil}
 			if info.Setup != nil {
 				picker.target.KernelLine = info.Setup.KernelLine
@@ -546,19 +550,13 @@ func (s *screen) editBootloader(drive platform.Drive) {
 						cancel.Enable()
 						cancel.SetText(s.t("Close"))
 						bar.Hide()
-						if e != nil {
-							status.SetText(e.Error())
-							return
-						}
-						if result.Bootloader != nil {
-							if result.Bootloader.Warning != "" {
-								status.SetText(s.t(result.Bootloader.Warning))
-							} else {
-								if result.Bootloader.Options != nil {
-									status.SetText(firmware.BootOptionsSummary(firmware.BootloaderChoice{Choice: result.Bootloader.Options.Bootloader, Chain: result.Bootloader.Options.Chain, Sleep: result.Bootloader.Options.Sleep}, result.Bootloader.Issues))
-								} else {
-									status.SetText(s.bootloaderSummary(result.Bootloader.Record))
-								}
+						text, retry := s.bootApplyMessage(result.Bootloader, e)
+						status.SetText(text)
+						if retry {
+							// Nothing or only part was written: Apply again is the way out.
+							apply.Enable()
+							if !drive.Fixed && !info.Card.DataCard {
+								choose.Enable()
 							}
 						}
 					})
@@ -568,8 +566,60 @@ func (s *screen) editBootloader(drive platform.Drive) {
 			if picker.selection() == nil {
 				apply.Disable()
 			}
-			s.leave(pageView(title(s.t("Boot options")), wrapped(s.driveTitle(drive)), container.NewVBox(picker.box, container.NewHBox(choose), status, bar), nil, cancel, apply))
+			s.leave(pageView(title(s.t("Boot options")), wrapped(s.driveTitle(drive)), container.NewVBox(s.bootSourcesHelp(), picker.box, container.NewHBox(choose), status, bar), nil, cancel, apply))
 			picker.load()
 		})
 	}()
+}
+
+// Boot options page texts (user-visible, translated).
+const (
+	bootSourcesTitle     = "Where the bootloader comes from"
+	bootSourceImage      = "As in the image (recommended): puts back the bootloader that the chosen image file carries. Needs no internet."
+	bootSourceStandard   = "Standard U-Boot: the newest test build of the U-Boot the consoles came with. Downloaded from GitHub."
+	bootSourceNew        = "New U-Boot: the newest test build of the newer mainline U-Boot. Downloaded from GitHub."
+	bootSourceFirstStage = "A bootloader change replaces U-Boot only. The first start-up stage stays as it is, and games, saves and apps are not touched. With an image file chosen, its first start-up stage and sleep firmware are put back as well, the same way an update does."
+	bootApplied          = "Done. The card has the new bootloader. Put the card back in the console and switch it on. If it doesn't start, come back here and choose \"As in the image\"."
+	bootUnchanged        = "Nothing to do: the card already has this bootloader version. Nothing was written."
+	bootRefusedText      = "Nothing was written. The boot area of this card is not laid out the way andr36oid lays it out, so the flasher leaves it alone. To use this card with andr36oid, set it up with \"Install a new card (erase)\"."
+	bootUbootStopped     = "Writing the bootloader stopped part way. The card still starts: it always keeps one complete bootloader copy. Keep the card in the reader, check that it sits firmly, then choose Apply again."
+	bootStageStopped     = "Writing the boot firmware stopped part way. The card may not start until it is written again. Keep the card in the reader, check that it sits firmly, then choose Apply again."
+)
+
+// bootSourcesHelp says in plain words what each Bootloader choice does.
+func (s *screen) bootSourcesHelp() fyne.CanvasObject {
+	return container.NewVBox(heading(s.t(bootSourcesTitle)), wrapped(s.t(bootSourceImage)), wrapped(s.t(bootSourceStandard)), wrapped(s.t(bootSourceNew)), wrapped(s.t(bootSourceFirstStage)))
+}
+
+// bootApplyMessage is the result line of Boot options: applied, nothing to do,
+// refused before any write, or stopped part way. retry: Apply can be used again.
+func (s *screen) bootApplyMessage(out *firmware.BootloaderOutcome, e error) (string, bool) {
+	if e != nil {
+		switch firmware.BootErrorKind(e) {
+		case "refused":
+			return s.t(bootRefusedText), false
+		case "uboot-stopped":
+			return s.t(bootUbootStopped) + "\n" + e.Error(), true
+		case "stage-stopped":
+			return s.t(bootStageStopped) + "\n" + e.Error(), true
+		}
+		return e.Error(), true
+	}
+	if out == nil {
+		return "", false
+	}
+	if out.Unchanged {
+		return s.t(bootUnchanged), false
+	}
+	if out.Warning != "" {
+		return s.t(out.Warning), false
+	}
+	summary := s.bootloaderSummary(out.Record)
+	if out.Options != nil {
+		summary = firmware.BootOptionsSummary(firmware.BootloaderChoice{Choice: out.Options.Bootloader, Chain: out.Options.Chain, Sleep: out.Options.Sleep}, out.Issues)
+	}
+	if summary == "" {
+		return s.t(bootApplied), false
+	}
+	return s.t(bootApplied) + "\n" + summary, false
 }

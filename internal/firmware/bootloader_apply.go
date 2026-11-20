@@ -24,6 +24,8 @@ type BootloaderOutcome struct {
 	plan    *BootPlan
 	Record  *BootloaderRecord `json:"record,omitempty"`
 	Warning string            `json:"warning,omitempty"`
+	// Unchanged: the card already had exactly these bytes, nothing was written.
+	Unchanged bool `json:"unchanged,omitempty"`
 }
 
 // ResolveBootloader completes optional downloads/checks before a flash starts.
@@ -120,12 +122,12 @@ func ApplyBootloader(disk HotfixDisk, size int64, data []byte, record Bootloader
 	}
 	bootPart, _ := stage.tab.Find("BOOT")
 	if bootPart.Offset() < BootloaderOffset+BootloaderSize || size < BootloaderOffset+BootloaderSize {
-		return errors.New("card layout has no standard U-Boot slot")
+		return bootRefused(errors.New("card layout has no standard U-Boot slot"))
 	}
 	for _, part := range stage.tab.Parts {
 		if part.Offset() < BootloaderOffset+BootloaderSize && part.Offset()+part.Size() > BootloaderOffset {
 			if !strings.EqualFold(part.Name, "uboot") || part.Offset() != BootloaderOffset || part.Size() != BootloaderSize {
-				return errors.New("another partition overlaps the U-Boot slot")
+				return bootRefused(errors.New("another partition overlaps the U-Boot slot"))
 			}
 		}
 	}
@@ -145,7 +147,7 @@ func ApplyBootloader(disk HotfixDisk, size int64, data []byte, record Bootloader
 		return fmt.Errorf("prepare card history: %w", e)
 	}
 	if e = WriteBootloaderSlot(disk, data, nil); e != nil {
-		return e
+		return bootUbootStopped(e)
 	}
 	if e = stage.Commit(); e != nil {
 		return fmt.Errorf("save card history: %w", e)

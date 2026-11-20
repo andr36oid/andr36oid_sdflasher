@@ -165,6 +165,20 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 		return e
 	}
 	defer src.Close()
+	var classicUboot []byte
+	for _, w := range p.Writes {
+		if !w.Uboot {
+			continue
+		}
+		if classicUboot != nil {
+			return errors.New("duplicate classic U-Boot write")
+		}
+		classicUboot, e = firmware.ImageBootloader(im)
+		if e != nil {
+			return e
+		}
+
+	}
 	boot, e := os.Open(bootPath)
 	if e != nil {
 		return e
@@ -345,9 +359,16 @@ func Execute(ctx context.Context, dst Device, im *firmware.Image, p *Plan, bootP
 	for _, w := range p.Writes {
 		r, off := sourceFor(w)
 		started := time.Now()
-		if e = copyRange(ctx, dst, r, w.Offset, off, w.Length, func(n int64) {
-			notify(Progress{Phase: "writing", Name: w.Name, Done: done + n, Total: total, Offset: w.Offset, Length: n})
-		}); e != nil {
+		if w.Uboot {
+			e = firmware.WriteBootloaderSlot(classicWriteDevice{dst}, classicUboot, func(n, totalCopy int64) {
+				notify(Progress{Phase: "writing", Name: w.Name, Done: done + n, Total: total, Offset: w.Offset, Length: n})
+			})
+		} else {
+			e = copyRange(ctx, dst, r, w.Offset, off, w.Length, func(n int64) {
+				notify(Progress{Phase: "writing", Name: w.Name, Done: done + n, Total: total, Offset: w.Offset, Length: n})
+			})
+		}
+		if e != nil {
 			return fail(e)
 		}
 		if e = dst.Sync(); e != nil {
@@ -477,7 +498,22 @@ func restore(ctx context.Context, dst Device, dir string, b *Backup) error {
 		if e != nil {
 			return e
 		}
-		e = copyRange(ctx, dst, f, ent.Offset, 0, ent.Length, nil)
+		if ent.Offset == firmware.BootloaderOffset && ent.Length == firmware.BootloaderSize {
+			// Recovery is also a U-Boot update. Keep a complete old/new copy
+			// throughout instead of restoring the whole slot in one write.
+			data, readErr := io.ReadAll(io.LimitReader(f, firmware.BootloaderSize+1))
+			if readErr != nil {
+				e = readErr
+			} else if firmware.CheckBootloaderContainer(data) != nil {
+				// Restore a checksummed damaged backup exactly as saved.
+				// It may still have one usable copy, or be a repair fixture.
+				e = copyRange(ctx, dst, bytes.NewReader(data), ent.Offset, 0, ent.Length, nil)
+			} else {
+				e = firmware.WriteBootloaderSlot(classicWriteDevice{dst}, data, nil)
+			}
+		} else {
+			e = copyRange(ctx, dst, f, ent.Offset, 0, ent.Length, nil)
+		}
 		if e == nil {
 			e = dst.Sync()
 		}
@@ -595,4 +631,12 @@ type zeros struct{}
 func (zeros) ReadAt(b []byte, _ int64) (int, error) {
 	clear(b)
 	return len(b), nil
+}
+
+// Keep the existing platform read-back flush through the write-boundary wrappers.
+type classicWriteDevice struct{ Device }
+
+func (d classicWriteDevice) DiscardReadCache(off, n int64) error {
+	forgetCached(d.Device, off, n)
+	return nil
 }

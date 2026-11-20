@@ -172,6 +172,9 @@ func WriteBootloaderSlot(disk HotfixDisk, data []byte, progress func(int64, int6
 		if err = disk.Sync(); err != nil {
 			return err
 		}
+		if err = discardBootloaderCache(disk, off, bootloaderCopySize); err != nil {
+			return err
+		}
 		if _, err = disk.ReadAt(check, off); err != nil {
 			return err
 		}

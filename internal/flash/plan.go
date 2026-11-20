@@ -26,6 +26,7 @@ type Write struct {
 	Range
 	SourceOffset int64  `json:"source_offset"`
 	Boot         bool   `json:"boot"`
+	Uboot        bool   `json:"uboot_copies,omitempty"`
 	System       bool   `json:"system,omitempty"`
 	Data         []byte `json:"data,omitempty"`
 	// Zero writes zeros; Guest writes from the plan's game system image.
@@ -387,8 +388,34 @@ func BuildWith(im *firmware.Image, card Card, size int64, mode, profile string, 
 				p.Protected = append(p.Protected, Range{q.Name, q.Offset(), q.Size()})
 				continue
 			}
-			p.Writes = append(p.Writes, Write{Range: Range{q.Name, q.Offset(), q.Size()}, SourceOffset: q.Offset(), Boot: q.Name == "BOOT"})
+			classic := im.Facts["bootloader_chain"] == "classic"
+			if classic && (q.Name == "idbloader" || q.Name == "trust") {
+				if !exists || q.Start != old.Start || q.End != old.End {
+					return nil, fmt.Errorf("classic update cannot move %s", q.Name)
+				}
+				// A computer UPDATE retains the old behaviour: refresh the
+				// image's vendor pieces on this recognized installation.
+			}
+			p.Writes = append(p.Writes, Write{Range: Range{q.Name, q.Offset(), q.Size()}, SourceOffset: q.Offset(), Boot: q.Name == "BOOT", Uboot: classic && q.Name == "uboot"})
 		}
+	}
+	if mode == "update" && im.Facts["bootloader_chain"] == "classic" {
+		// Vendor first stage and trust come before U-Boot proper. This is a
+		// computer-side operation on a recognized card, with a recovery backup.
+		writes := make([]Write, 0, len(p.Writes))
+		for _, name := range []string{"idbloader", "trust", "uboot"} {
+			for _, w := range p.Writes {
+				if w.Name == name {
+					writes = append(writes, w)
+				}
+			}
+		}
+		for _, w := range p.Writes {
+			if w.Name != "idbloader" && w.Name != "trust" && w.Name != "uboot" {
+				writes = append(writes, w)
+			}
+		}
+		p.Writes = writes
 	}
 	// Windows only gets BOOT, EASYROMS and AUTOAPK (people may add their own APKs
 	// before the first start); the rest would each pop up "format disk?"
@@ -463,6 +490,9 @@ func (p *Plan) Validate() error {
 		return errors.New("invalid target size")
 	}
 	for _, w := range p.Writes {
+		if w.Uboot && (p.Mode != "update" || w.Offset != firmware.BootloaderOffset || w.Length != firmware.BootloaderSize || w.SourceOffset != w.Offset || w.Boot || w.System || w.Zero || w.Guest || w.Data != nil) {
+			return errors.New("invalid classic U-Boot copy write")
+		}
 		if w.Offset < 0 || w.Length <= 0 || w.Offset > p.Size || w.Length > p.Size-w.Offset {
 			return errors.New("write outside target")
 		}
