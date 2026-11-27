@@ -642,8 +642,8 @@ func (s *screen) useCustomDTB(file string) {
 func (s *screen) showFileDialog(d *dialog.FileDialog) {
 	d.SetView(dialog.ListView)
 	size := s.win.Canvas().Size()
-	d.Resize(fyne.NewSize(max(size.Width-80, 600), max(size.Height-80, 420)))
 	d.Show()
+	d.Resize(fyne.NewSize(max(size.Width-80, 600), max(size.Height-80, 420)))
 }
 
 func (s *screen) clearCustom() {

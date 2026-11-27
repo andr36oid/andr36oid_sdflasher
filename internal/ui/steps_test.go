@@ -12,6 +12,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/test"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/catalog"
 	"github.com/andr36oid/andr36oid-sdflasher/internal/firmware"
@@ -46,6 +47,15 @@ func testScreen(t *testing.T, size fyne.Size) *screen {
 	s.guestFor, s.guests = "x", map[string]*guestLookup{}
 	s.build()
 	return s
+}
+
+// showFileDialog must not resize the dialog before it is shown: Fyne's
+// FileDialog.Resize dereferences a dialog that only exists after Show.
+func TestShowFileDialogDoesNotPanic(t *testing.T) {
+	s := testScreen(t, fyne.NewSize(980, 680))
+	d := dialog.NewFileOpen(func(fyne.URIReadCloser, error) {}, s.win)
+	s.showFileDialog(d)
+	d.Hide()
 }
 
 func TestStartChoosesTask(t *testing.T) {
