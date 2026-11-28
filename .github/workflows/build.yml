@@ -32,10 +32,9 @@ jobs:
           - {os: macos-15-intel, target: macos, arch: amd64}
           - {os: macos-15, target: macos, arch: arm64}
     runs-on: ${{ matrix.os }}
-    # The experimental windows-11-arm (CLANGARM64) leg ships an old p7zip that cannot
-    # decode the ARM64-BCJ filter in the pinned Mesa archive, so fetch-mesa fails there.
-    # Keep that one leg non-blocking so the release still publishes; the amd64 Windows
-    # portable carries the no-GPU Mesa (opengl32.dll) launch fix.
+    # The windows-11-arm (CLANGARM64) leg stays non-blocking so a problem on that young
+    # runner image never holds back a release. Its MSYS p7zip cannot decode the ARM64
+    # filter of the pinned arm64 Mesa archive; the build step below adds a 7-Zip that can.
     continue-on-error: ${{ matrix.experimental || false }}
     steps:
       - uses: actions/checkout@v4
@@ -73,6 +72,10 @@ jobs:
         env:
           CC: ${{ matrix.cc }}
         run: |
+          # The MSYS p7zip (17.05) cannot decode the ARM64 filter of the arm64 Mesa archive
+          # (7-Zip 23.01 or newer can). fetch-mesa tries every 7-Zip it finds, so this is
+          # best effort: without the package it falls back to the 7-Zip on the runner.
+          pacman -S --noconfirm --needed "${MINGW_PACKAGE_PREFIX}-7zip" || echo "no ${MINGW_PACKAGE_PREFIX}-7zip package"
           bash scripts/build.sh
           # opengl32.dll is Mesa llvmpipe (third_party/mesa): software OpenGL so the GUI
           # starts without a GPU driver. It must sit beside the exe.
